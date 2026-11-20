@@ -90,19 +90,19 @@ held in reserve on purpose.
 
 | Strategy | Workload fairness (during run) | After first 10% | Value fairness | Assigned | Critical → Senior |
 |---|---|---|---|---|---|
-| **fair_share (ours)** | **0.9919** | **0.9912** | **0.9974** | 94.02% | 98.55% |
-| least_loaded | 0.9919 | 0.9912 | 0.9973 | 94.02% | 98.55% |
-| round_robin | 0.9872 | 0.9816 | 0.9855 | 93.93% | 98.55% |
-| first_match | 0.6120 | **0.4178** | 0.8144 | 94.03% | 98.55% |
+| **fair_share (ours)** | **0.9916** | **0.9912** | **0.9977** | 98.53% | 98.64% |
+| least_loaded | 0.9916 | 0.9912 | 0.9976 | 98.53% | 98.64% |
+| round_robin | 0.9876 | 0.9816 | 0.9960 | 98.49% | 98.64% |
+| first_match | 0.6192 | **0.4178** | 0.8397 | 98.62% | 98.64% |
 
 **Live mode** (leads routed in the order they arrive, priorities mixed, like a real day)
 
 | Strategy | Workload fairness (during run) | After first 10% | Value fairness | Assigned | Critical → Senior |
 |---|---|---|---|---|---|
-| **fair_share (ours)** | **0.9967** | 0.9867 | 0.9874 | 94.06% | **90.91%** |
-| least_loaded | 0.9961 | 0.9908 | 0.9829 | 94.06% | 89.71% |
-| round_robin | 0.9887 | 0.9817 | 0.9919 | 93.49% | **61.36%** |
-| first_match | 0.5655 | **0.1272** | 0.9124 | 93.96% | 84.93% |
+| **fair_share (ours)** | **0.9973** | 0.9867 | 0.9928 | 98.90% | **94.45%** |
+| least_loaded | 0.9968 | 0.9908 | 0.9889 | 98.89% | 93.04% |
+| round_robin | 0.9891 | 0.9817 | 0.9942 | 97.92% | **62.19%** |
+| first_match | 0.5730 | **0.1272** | 0.9620 | 98.87% | 88.03% |
 
 "During run" averages 10 snapshots taken as leads are handed out. A manager looks at the queue
 mid-day, not only at the end.
@@ -112,15 +112,15 @@ mid-day, not only at the end.
 * **first_match is clearly worst.** After the first 10% of leads, fairness is 0.13–0.42: a few reps
   are buried while their teammates sit idle.
 * **round_robin looks fine on paper but breaks the business.** Because it ignores capacity, Seniors
-  fill up with ordinary leads early. In live mode only **61%** of Critical leads reach a Senior,
-  versus **91%** with fair_share.
+  fill up with ordinary leads early. In live mode only **62%** of Critical leads reach a Senior,
+  versus **94%** with fair_share.
 * **least_loaded is our method's closest relative.** It's layer 1 without the look-ahead, value
   fairness and rotation, and on the batch run the two tie. fair_share pulls ahead when priorities
-  arrive mixed (live mode): better value fairness (0.9874 vs 0.9829), better workload fairness
-  (0.9967 vs 0.9961), and more Critical leads to Seniors (90.91% vs 89.71%). It also guarantees
+  arrive mixed (live mode): better value fairness (0.9928 vs 0.9889), better workload fairness
+  (0.9973 vs 0.9968), and more Critical leads to Seniors (94.45% vs 93.04%). It also guarantees
   rotation on ties instead of relying on file order.
-* **Batching Critical leads first is part of the design.** The same algorithm gets 98.55% of
-  Critical leads to Seniors in batch mode versus 90.91% live, because urgent leads get first pick of
+* **Batching Critical leads first is part of the design.** The same algorithm gets 98.64% of
+  Critical leads to Seniors in batch mode versus 94.45% live, because urgent leads get first pick of
   Senior capacity.
 
 ---
@@ -128,7 +128,7 @@ mid-day, not only at the end.
 ## Why not something else? (Q&A prep)
 
 **"Why not plain round-robin?"** It treats a 20-slot Senior and a 50-slot Junior the same, so the
-Senior is full at 40% team utilization and Critical leads start spilling over (61% Critical → Senior
+Senior is full at 40% team utilization and Critical leads start spilling over (62% Critical → Senior
 in live mode).
 
 **"Why not random assignment?"** Fair on average, but not reproducible (you can't demo or test it
@@ -143,7 +143,7 @@ determinism. The live-mode numbers show the difference.
 1,600 reps).
 
 **"What would you add next?"** (1) A **Senior reserve** for live mode: keep e.g. 15% of each Senior's
-slots for Critical leads, which would push the 91% closer to batch-mode's 98.5%. (2) **Performance
+slots for Critical leads, which would push the 94% closer to batch-mode's 98.6%. (2) **Performance
 weighting**: tilt the share toward reps with higher close rates, once that data exists. Both slot in
 as extra terms in the same sort key.
 

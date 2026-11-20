@@ -8,7 +8,7 @@ Lightning-style dashboard to present the results. **No lead is ever dropped.**
 | Scale dataset: 50,000 leads × 1,600 reps | Result |
 |---|---|
 | Time, end to end | about 2.5 seconds (≈ 20,000 leads/second) |
-| Assigned / Manager Review | 94% / 6% |
+| Assigned / Manager Review | 98.5% / 1.5% (sample: 61% / 39%) |
 | Critical leads handled by a Senior | 98.6% (the rest by Managers or Manager Review) |
 | Critical leads given to a Junior | 0 |
 | Reps over their max capacity | 0 |
@@ -127,12 +127,23 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
 
 ### Step 3: Routing
 
-1. **Pools.** Reps are grouped by `(region, language, industry)`.
+1. **Pools.** Reps are grouped by the traits they share: all three `(region, language, industry)`,
+   plus each pair of two.
 2. **Urgent first.** Leads are routed Critical → Low, then by score, so Critical leads get first
    pick of capacity.
-3. **Matching.** A lead only uses its exact pool. Fallbacks only apply when the lead's *own* data is
-   uncertain: unknown industry → any industry in the same region + language; ambiguous region →
-   its second region. Language is never relaxed.
+3. **Matching: most traits in common first.** Try reps who share **all 3** traits (region, language,
+   industry). Only if none of them is free, use reps who share **2 of 3**. Industry gives way first,
+   then region, then language (a rep who speaks the lead's language is the most useful partial
+   match). An ambiguous region like `ASIA PACIFICEurope` also tries its second region at 3 of 3.
+   Every assignment records its match level, e.g. *"2 of 3: region + language"*.
+
+   | Matching | Sample: assigned | Scale: assigned |
+   |---|---|---|
+   | Strict 3 of 3 (`min_traits_to_match: 3`) | 19% | 94.0% |
+   | **3 of 3, then 2 of 3 (default)** | **61%** | **98.5%** |
+
+   On the scale run, 45,509 leads matched on 3 of 3 and 3,754 on 2 of 3. Set
+   `routing.min_traits_to_match: 3` in `config/rules.yaml` for the brief's literal strict rule.
 4. **Seniority.** Critical → Senior, then Manager, **never Junior**. Others → Junior or Senior, then
    Manager (Managers have small capacity, so they're saved for overflow).
 5. **Fair distribution: Capacity-Weighted Fair Round-Robin.** Among the eligible reps, pick:
@@ -147,16 +158,16 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
 6. **Capacity.** Each assignment adds 1 to the rep's load; a full rep leaves the pools.
 7. **Overflow.** No free rep → **Manager Review** with a reason: *No matching rep*,
    *All eligible reps at capacity*, *No Senior/Manager for Critical lead*, or
-   *Missing region or language*.
+   *Too little data to match* (fewer than 2 of the 3 traits known).
 
 **Why this method?** Measured with Jain's fairness index (1.0 = perfectly even) on the 50,000 leads,
 `leadrouter compare --dataset scale`:
 
 | Strategy | Workload fairness | After first 10% | Critical → Senior (live arrivals) |
 |---|---|---|---|
-| **Fair round-robin (ours)** | **0.992** | **0.991** | **90.9%** |
-| Plain round-robin | 0.987 | 0.982 | 61.4% |
-| First match | 0.612 | 0.418 | 84.9% |
+| **Fair round-robin (ours)** | **0.992** | **0.991** | **94.5%** |
+| Plain round-robin | 0.988 | 0.982 | 62.2% |
+| First match | 0.619 | 0.418 | 88.0% |
 
 Plain round-robin ignores capacity, so Seniors fill up early and Critical leads spill over;
 first-match buries a few reps while the rest sit idle. Each pool holds only ~10–30 reps,

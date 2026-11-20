@@ -77,7 +77,7 @@ capacity"**. C is a Junior, so it is never offered a Critical lead, even when it
 | Least-loaded by **ratio**, round-robin on ties | Fair to reps with different capacities; still rotates | Pure round-robin (overloads small-capacity reps); first match (the brief forbids it) |
 | Route **Critical first** | Urgent leads get scarce Senior capacity | File order (a Low lead could take the last Senior slot) |
 | Managers **last** for non-critical leads | Managers have 5–10 slots; keep them for Critical overflow | Treat Managers like everyone else |
-| Strict match; relax **only** when the lead's own data is uncertain | The brief requires strict matching; unknown industry shouldn't strand a lead | Always relax (gives Finance leads to Retail experts) |
+| Most traits in common first: **3 of 3, then 2 of 3** | Strict 3-of-3 left 81% of the sample in Manager Review; a rep sharing 2 of 3 traits beats no rep. 3-of-3 always wins when anyone is free | Strict only (`min_traits_to_match: 3`, still available); 1 of 3 (too loose: a Finance lead to a Retail rep in another region) |
 | Language **never** relaxed | A rep can't work a lead they can't talk to | Relax language as a last resort |
 | Unknown seniority → **Junior** | Safest: Juniors can never take Critical leads | Guess Senior |
 | Negative capacity → **absolute value** | -20, -45 match the dictionary's ranges exactly: a sign typo | Treat as 0 (wastes a real rep) |

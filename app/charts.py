@@ -103,7 +103,7 @@ def routing_funnel(stages: list[tuple[str, int]]) -> go.Figure:
 # Row 2
 # ======================================================================================
 def donut(labels: list[str], values: list[int], center: str, legend_title: str,
-          colors: list[str] | None = None, caption: str = "Record Count") -> go.Figure:
+          colors: list[str] | None = None, caption: str | None = None) -> go.Figure:
     """Donut with the total in the middle and a legend underneath (like 'Sales by Region')."""
     fig = _base()
     fig.add_pie(labels=labels, values=values, hole=0.62, sort=False, direction="clockwise",
@@ -114,7 +114,8 @@ def donut(labels: list[str], values: list[int], center: str, legend_title: str,
     fig.add_annotation(text=f"<b>{center}</b>", x=0.5, y=0.57, xref="paper", yref="paper",
                        showarrow=False, font={"size": 24, "color": "#181818"})
     _legend_below(fig)
-    _caption(fig, caption)
+    if caption:
+        _caption(fig, caption)
     return fig
 
 

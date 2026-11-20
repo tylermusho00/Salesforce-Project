@@ -56,7 +56,8 @@ def test_least_loaded_uses_load_ratio_not_raw_count():
 
 
 def test_no_eligible_rep_goes_to_manager_review():
-    reps = [make_rep("S", SR, region="Europe")]
+    # Shares only 1 of 3 traits (industry): not enough even for a 2-of-3 match.
+    reps = [make_rep("S", SR, region="Europe", language="German")]
     res = route_all([make_lead()], reps)
     a = res.assignments[0]
     assert a.status is AssignmentStatus.MANAGER_REVIEW and a.overflow_reason is OverflowReason.NO_MATCH
@@ -81,9 +82,55 @@ def test_strict_match_on_region_language_and_industry():
     assert {a.rep_id for a in res.assignments} == {"ok"}
 
 
-def test_missing_routing_data_goes_to_review():
-    res = route_all([make_lead(region=None)], [make_rep()])
+def test_too_little_data_goes_to_review():
+    # Only 1 trait known (industry): a 2-of-3 match is impossible.
+    res = route_all([make_lead(region=None, language=None)], [make_rep()])
     assert res.assignments[0].overflow_reason is OverflowReason.MISSING_ROUTING_DATA
+
+
+def test_missing_region_still_routes_on_language_and_industry():
+    res = route_all([make_lead(region=None)], [make_rep("r")])
+    a = res.assignments[0]
+    assert a.rep_id == "r" and a.match_level is MatchLevel.RELAXED_REGION
+
+
+# ---------------------------------------------------------------- 3-of-3 first, then 2-of-3
+def test_three_of_three_beats_two_of_three_even_if_busier():
+    reps = [make_rep("exact", SR, max_capacity=10, current=8),          # 80% full, all 3 traits
+            make_rep("partial", SR, max_capacity=10, industry="Retail")]  # empty, only 2 traits
+    res = route_all([make_lead()], reps)
+    assert res.assignments[0].rep_id == "exact" and res.assignments[0].match_level is MatchLevel.EXACT
+
+
+def test_falls_back_to_two_of_three_when_exact_reps_are_full():
+    reps = [make_rep("exact", SR, max_capacity=1), make_rep("partial", SR, industry="Retail")]
+    res = route_all(leads(2), reps)
+    assert [a.rep_id for a in res.assignments] == ["exact", "partial"]
+    assert res.assignments[1].match_level is MatchLevel.RELAXED_INDUSTRY
+
+
+def test_relax_order_industry_then_region_then_language():
+    reps = [make_rep("diff-language", SR, language="German"),
+            make_rep("diff-region", SR, region="Europe"),
+            make_rep("diff-industry", SR, industry="Retail")]
+    res = route_all(leads(1), reps)
+    assert res.assignments[0].rep_id == "diff-industry"
+    reps.pop()  # without the industry-relaxed rep, region gives way next
+    res = route_all(leads(1), reps)
+    assert res.assignments[0].rep_id == "diff-region" and res.assignments[0].match_level is MatchLevel.RELAXED_REGION
+
+
+def test_two_of_three_never_gives_critical_to_junior():
+    reps = [make_rep("J", JR, industry="Retail")]  # 2 of 3, but a Junior
+    res = route_all(leads(1, priority=CRIT), reps)
+    assert res.assignments[0].rep_id is None
+    assert res.assignments[0].overflow_reason is OverflowReason.NO_SENIOR_AVAILABLE
+
+
+def test_strict_mode_only_accepts_three_of_three(strict_matching):
+    reps = [make_rep("partial", SR, industry="Retail")]
+    res = route_all([make_lead()], reps)
+    assert res.assignments[0].rep_id is None and res.assignments[0].overflow_reason is OverflowReason.NO_MATCH
 
 
 def test_unknown_industry_prefers_generalist_then_relaxes():
@@ -93,7 +140,13 @@ def test_unknown_industry_prefers_generalist_then_relaxes():
     assert res.assignments[1].match_level is MatchLevel.RELAXED_INDUSTRY
 
 
-def test_known_industry_lead_is_not_sent_to_generalist():
+def test_known_industry_lead_uses_generalist_only_as_two_of_three():
+    res = route_all([make_lead()], [make_rep("gen", SR, industry=None)])
+    assert res.assignments[0].rep_id == "gen"
+    assert res.assignments[0].match_level is MatchLevel.RELAXED_INDUSTRY
+
+
+def test_strict_mode_never_sends_known_industry_to_generalist(strict_matching):
     res = route_all([make_lead()], [make_rep("gen", SR, industry=None)])
     assert res.assignments[0].rep_id is None
 

@@ -37,7 +37,7 @@ from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
 from lead_router.config import dataset_paths
 from lead_router.export import reps_frame, results_frame, salesforce_frame
-from lead_router.models import OverflowReason
+from lead_router.models import MatchLevel, OverflowReason
 from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, run_dataset, \
     run_pipeline_frames
 
@@ -71,7 +71,7 @@ def _badges(df: pd.DataFrame) -> pd.Series:
     match = df["match_level"].fillna("")
     parts = [
         df["vip_referral"].map({True: "VIP"}).fillna(""),
-        match.where(match != "Exact", ""),
+        match.where(match != MatchLevel.EXACT.value, ""),
         df["flags"].str.contains("ambiguous_region").map({True: "Ambiguous region"}).fillna(""),
         df["flags"].str.contains("duplicate").map({True: "Duplicate?"}).fillna(""),
         ("Imputed: " + df["imputed_fields"]).where(df["imputed_fields"] != "", ""),
@@ -460,9 +460,15 @@ def render(_store):
     as_of = (f"As of {datetime.now():%b %d, %Y, %I:%M %p} · {r.dataset.title()} dataset · "
              f"{m['total_leads']:,} leads routed in {seconds:.2f} s · Viewing as Sales Operations")
 
+    # --- match quality: 3 of 3 traits vs. 2 of 3 (see routing.pools_to_try)
+    levels = m["match_levels"]
+    full_matches = sum(n for name, n in levels.items() if MatchLevel(name).traits_matched == 3)
+    partial_matches = m["assigned"] - full_matches
+
     # --- big numbers: (value, caption)
     metrics = {
-        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% of {m['total_leads']:,} leads"),
+        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · {full_matches:,} on 3/3 traits · "
+                                           f"{partial_matches:,} on 2/3"),
         "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
         "critical": (f"{m['critical_senior_rate']}%",
                      html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
@@ -481,7 +487,7 @@ def render(_store):
         ("Rows uploaded", lq.rows_in),
         ("Unique leads", m["total_leads"]),
         ("Routable", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)),
-        ("Skill match found", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
+        ("2+ traits matched", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
                               - reasons.get(OverflowReason.NO_MATCH.value, 0)),
         ("Assigned to a rep", m["assigned"]),
     ]

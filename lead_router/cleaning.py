@@ -453,7 +453,7 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
             flags.append("expertise_unknown")
 
         if region.value is None or language.value is None:
-            flags.append("unroutable")   # can't be matched to anyone
+            flags.append("missing_region_or_language")   # only 2-of-3 matches possible
 
         # --- Seniority
         seniority_result = cleaners["seniority"].resolve(row["Seniority_Level"])

@@ -39,6 +39,19 @@ LEAD_HEADER = "Lead_ID,Company_Name,Region,Language,Industry_Vertical,Company_Si
 REP_HEADER = "Rep_ID,Name,Region,Language,Industry_Vertical_Expertise,Seniority_Level,Current_Capacity,Max_Capacity\n"
 
 
+@pytest.fixture
+def strict_matching(monkeypatch):
+    """Run a test with routing.min_traits_to_match = 3 (strict 3-of-3, the brief's literal rule)."""
+    import copy
+
+    import lead_router.routing as routing
+    from lead_router.config import load_rules
+
+    rules = copy.deepcopy(load_rules())
+    rules["routing"]["min_traits_to_match"] = 3
+    monkeypatch.setattr(routing, "load_rules", lambda: rules)
+
+
 @pytest.fixture(autouse=True)
 def _clean_state():
     STATE.reset()

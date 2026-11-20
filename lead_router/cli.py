@@ -54,6 +54,7 @@ def print_summary(result: PipelineResult) -> None:
         ("Team utilization", f"{m['utilization']}%"),
         ("Distribution", f"{m['strategy']} · fairness (Jain index) {m['fairness_during_run']:.4f} workload, "
                          f"{m['value_fairness']:.4f} value"),
+        ("Match quality", ", ".join(f"{k}: {v:,}" for k, v in m["match_levels"].items()) or "-"),
         ("Overflow reasons", ", ".join(f"{k}: {v:,}" for k, v in m["overflow_reasons"].items()) or "-"),
         ("Throughput", f"{m['throughput_lps']:,} leads/second"),
         ("Time per stage", ", ".join(f"{stage} {secs:.2f}s" for stage, secs in t.items())),

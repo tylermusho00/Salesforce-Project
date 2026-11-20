@@ -5,23 +5,25 @@ THE ALGORITHM IN PLAIN ENGLISH
 ==============================
 
 Setup: put reps into "pools"
-    A pool is every rep with the same (region, language, industry).
-        ("Europe", "German", "Finance")  ->  [rep R-12, rep R-40, rep R-77, ...]
-    Each rep is also put in an "any industry" pool for its region + language:
-        ("Europe", "German", ANY)        ->  every Europe/German rep
-    That second pool is ONLY used for leads whose industry is unknown.
+    A pool is every rep sharing the same traits. Each rep sits in 4 pools:
+        ("Europe", "German", "Finance")   all 3 traits          -> used for 3-of-3 matches
+        ("Europe", "German", ANY)         region + language     -> 2-of-3 matches
+        (ANY,      "German", "Finance")   language + industry   -> 2-of-3 matches
+        ("Europe", ANY,      "Finance")   region + industry     -> 2-of-3 matches
 
 Order: urgent leads first
     Leads are routed Critical -> High -> Medium -> Low (then highest score first),
     so Critical leads get first pick while capacity is still free.
 
 For each lead:
-    1. Decide which pools it may use, best match first (see `pools_to_try`):
-           normal lead            -> its exact (region, language, industry) pool only
-           industry unknown       -> reps with unknown expertise, then any industry
-           region ambiguous       -> its first region, then its second region
-           region/language missing-> nothing: straight to Manager Review
-       Language is never relaxed: a rep must speak the lead's language.
+    1. Decide which pools it may use, MOST TRAITS IN COMMON FIRST (see `pools_to_try`):
+           3 of 3   same region, language and industry (also tries the 2nd region of an
+                    ambiguous value like "ASIA PACIFICEurope")
+           2 of 3   only if nobody with 3 of 3 is free. Which trait gives way first is set in
+                    rules.yaml (routing.relax_order); default: industry, then region, then language
+                    (a rep who speaks the lead's language is the most useful partial match).
+       Set routing.min_traits_to_match: 3 in rules.yaml for strict 3-of-3 only.
+       A lead with fewer than 2 known traits can't be matched: straight to Manager Review.
 
     2. Decide which seniorities may take it, in groups (see `seniority_groups`):
            Critical  -> [Senior]  then  [Manager]          Juniors NEVER get Critical leads
@@ -42,7 +44,7 @@ For each lead:
            "No matching rep"                      nobody covers this combination at all
            "No Senior/Manager for Critical lead"  only Juniors match a Critical lead
            "All eligible reps at capacity"        the right reps exist but are all full
-           "Missing region or language"           we couldn't even start
+           "Too little data to match"             fewer than 2 of the 3 traits are known
 
 Why this is fast enough: a pool holds ~10-30 reps for 1,600 reps total, so step 3 looks at a
 handful of reps per lead. 50,000 leads route in well under a second.
@@ -58,10 +60,25 @@ from .models import (Assignment, AssignmentStatus, Lead, MatchLevel, OverflowRea
                      Rep, RoutingResult, Seniority)
 from .scoring import priority_order
 
-ANY_INDUSTRY = "*"  # marker for the "any industry" pools
+ANY = "*"            # marker for "this trait doesn't have to match" in a pool key
+ANY_INDUSTRY = ANY   # (old name, kept for readability in a few places)
 
-# A pool key: (region, language, industry). industry may also be None or ANY_INDUSTRY.
+# A pool key: (region, language, industry). Any position may be ANY; industry may also be None
+# (None = rep's expertise is unknown: they get leads whose industry is also unknown).
 PoolKey = tuple[str, str, str | None]
+
+
+def pools_for_rep(rep: Rep) -> list[PoolKey]:
+    """Every pool a rep belongs to: the 3-trait pool plus one pool per pair of known traits."""
+    pools = []
+    if rep.region and rep.language:
+        pools.append((rep.region, rep.language, rep.industry))   # all 3 traits
+        pools.append((rep.region, rep.language, ANY))            # region + language
+    if rep.language and rep.industry:
+        pools.append((ANY, rep.language, rep.industry))          # language + industry
+    if rep.region and rep.industry:
+        pools.append((rep.region, ANY, rep.industry))            # region + industry
+    return pools
 
 
 class RepPools:
@@ -89,14 +106,8 @@ class RepPools:
             self.file_position[rep.id] = position
             self.last_served[rep.id] = -1
             self.value_received[rep.id] = 0.0
-            if rep.region is None or rep.language is None:
-                self.pools_of[rep.id] = []
-                continue  # can't be matched to anyone (flagged "unroutable" during cleaning)
-
-            exact_pool = (rep.region, rep.language, rep.industry)
-            any_industry_pool = (rep.region, rep.language, ANY_INDUSTRY)
-            self.pools_of[rep.id] = [exact_pool, any_industry_pool]
-            for pool in (exact_pool, any_industry_pool):
+            self.pools_of[rep.id] = pools_for_rep(rep)
+            for pool in self.pools_of[rep.id]:
                 self.headcount[pool][rep.seniority] += 1
                 if not rep.is_full:          # a rep with max capacity 0 never enters a pool
                     self.open_reps[pool].append(rep)
@@ -132,23 +143,43 @@ class RepPools:
 # Rules: which pools and which seniorities a lead may use
 # ======================================================================================
 def pools_to_try(lead: Lead, settings: dict) -> list[tuple[PoolKey, MatchLevel]]:
-    """Pools this lead may use, best match first, each labelled with how good the match is."""
-    regions = [(lead.region, MatchLevel.EXACT)]
-    if settings.get("try_alternate_region_when_ambiguous", True):
-        regions += [(other, MatchLevel.ALTERNATE_REGION) for other in lead.alt_regions]
+    """Pools this lead may use, most traits in common first, each labelled with the match level.
 
-    pools = []
-    for region, level in regions:
-        if lead.industry is not None:
-            # Known industry: strict match only (the brief requires strict matching).
-            pools.append(((region, lead.language, lead.industry), level))
-        else:
-            # Unknown industry: first reps whose expertise is also unknown...
-            pools.append(((region, lead.language, None), level))
-            # ...then any rep in the region + language.
-            if settings.get("relax_industry_when_unknown", True):
-                pools.append(((region, lead.language, ANY_INDUSTRY), MatchLevel.RELAXED_INDUSTRY))
-    return pools
+    Example: a Europe / German / Finance lead tries
+        ("Europe", "German", "Finance")    3 of 3
+        ("Europe", "German", ANY)          2 of 3: region + language
+        (ANY,      "German", "Finance")    2 of 3: language + industry
+        ("Europe", ANY,      "Finance")    2 of 3: region + industry
+    """
+    min_traits = settings.get("min_traits_to_match", 3)
+    relax_order = settings.get("relax_order", ["industry", "region", "language"])
+    regions = [lead.region] if lead.region else []
+    if lead.region and settings.get("try_alternate_region_when_ambiguous", True):
+        regions += list(lead.alt_regions)
+    language, industry = lead.language, lead.industry
+
+    pools: list[tuple[PoolKey, MatchLevel]] = []
+
+    # ---- 3 of 3 (industry None here = reps whose expertise is also unknown)
+    if language:
+        for i, region in enumerate(regions):
+            pools.append(((region, language, industry), MatchLevel.EXACT if i == 0 else MatchLevel.ALTERNATE_REGION))
+
+    # ---- 2 of 3: let one trait differ, in the configured order
+    # (an unknown industry may always be relaxed, even in strict mode, as before)
+    for trait in relax_order:
+        if trait == "industry" and language and (min_traits <= 2 or industry is None):
+            if industry is None and not settings.get("relax_industry_when_unknown", True):
+                continue
+            pools += [((region, language, ANY), MatchLevel.RELAXED_INDUSTRY) for region in regions]
+        elif trait == "region" and min_traits <= 2 and language and industry:
+            pools.append(((ANY, language, industry), MatchLevel.RELAXED_REGION))
+        elif trait == "language" and min_traits <= 2 and industry:
+            pools += [((region, ANY, industry), MatchLevel.RELAXED_LANGUAGE) for region in regions]
+
+    # remove repeats, keep the first (best) label
+    seen: set[PoolKey] = set()
+    return [(pool, level) for pool, level in pools if not (pool in seen or seen.add(pool))]
 
 
 def seniority_groups(priority: Priority, settings: dict) -> list[list[Seniority]]:
@@ -168,11 +199,12 @@ def seniority_groups(priority: Priority, settings: dict) -> list[list[Seniority]
 # ======================================================================================
 def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
     """Find a rep for one lead, or send it to Manager Review with a reason."""
-    if lead.region is None or lead.language is None:
-        missing = "region" if lead.region is None else "language"
-        return manager_review(lead, OverflowReason.MISSING_ROUTING_DATA, f"Cannot route: missing {missing}")
-
     candidate_pools = pools_to_try(lead, settings)
+    if not candidate_pools:
+        missing = [name for name, value in (("region", lead.region), ("language", lead.language),
+                                            ("industry", lead.industry)) if value is None]
+        return manager_review(lead, OverflowReason.MISSING_ROUTING_DATA,
+                              f"Cannot route: missing {', '.join(missing) or 'matching traits'}")
     groups = seniority_groups(lead.priority, settings)
 
     # Best match first; within a match, preferred seniority first.
@@ -236,11 +268,10 @@ def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = Non
 # ======================================================================================
 def describe_pool(pool: PoolKey) -> str:
     region, language, industry = pool
-    if industry == ANY_INDUSTRY:
-        industry_text = "any industry"
-    else:
-        industry_text = industry or "unknown industry"
-    return f"{region}/{language}/{industry_text}"
+    region_text = "any region" if region == ANY else region
+    language_text = "any language" if language == ANY else language
+    industry_text = "any industry" if industry == ANY else (industry or "unknown industry")
+    return f"{region_text}/{language_text}/{industry_text}"
 
 
 def assigned(lead: Lead, rep: Rep, pool: PoolKey, match_level: MatchLevel) -> Assignment:
