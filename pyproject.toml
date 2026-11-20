@@ -15,6 +15,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dashboard = [
+    "dash>=2.17",                       # web app framework (Plotly)
+    "dash-ag-grid>=31.2",               # data tables
+    "dash-bootstrap-components>=1.6",   # responsive layout
+    "plotly>=5.22",                     # charts
+]
 dev = [
     "pytest>=8",            # test runner
     "hypothesis>=6.100",    # random messy data tests

@@ -1,8 +1,9 @@
-# Lead Router: backend
+# Lead Router
 
 **2026 Ignite Design Challenge (Salesforce): Lead Prioritization.**
-The engine that cleans messy lead and rep data, scores every lead, and routes it to the right
-sales rep, or to a Manager Review queue when nobody can take it. **No lead is ever dropped.**
+An engine that cleans messy lead and rep data, scores every lead, and routes it to the right
+sales rep, or to a Manager Review queue when nobody can take it, plus a Salesforce
+Lightning-style dashboard to present the results. **No lead is ever dropped.**
 
 | Scale dataset: 50,000 leads × 1,600 reps | Result |
 |---|---|
@@ -20,8 +21,9 @@ Requires **Python 3.11+**.
 python -m venv .venv
 # Windows:      .venv\Scripts\activate
 # macOS/Linux:  source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dashboard,dev]"
 
+python -m app.main                       # dashboard -> http://127.0.0.1:8050
 leadrouter run --dataset sample          # 100 leads, 10 reps
 leadrouter run --dataset scale           # 50,000 leads, 1,600 reps
 leadrouter run --dataset scale --out results.csv
@@ -41,10 +43,36 @@ for a in result.manager_review[:5]:
     print(a.lead_id, a.overflow_reason)
 ```
 
+## The dashboard
+
+`python -m app.main`, then open <http://127.0.0.1:8050> and click **Run Scale (50k)**.
+
+Styled after a Salesforce Lightning dashboard (the "Sales Team Dream Dashboard" from the
+Salesforce Admins blog): a global header with search, the app nav bar, a record-style page header with
+the run buttons, and white report components on the blue-gray dashboard canvas.
+
+| Row | Components | The question it answers |
+|---|---|---|
+| 1 | Leads by Priority Tier · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review | How many leads, how urgent, and how many found an owner? |
+| 2 | Leads by Region · Where Leads Went (by Priority) · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
+| 3 | Critical → Senior % · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The four numbers to say out loud in a demo |
+| 4 | Capacity Used by Seniority · Reps by % Full | Is the team balanced? Are Managers held in reserve? |
+| Details | Lead Queue · Manager Review · Rep Capacity · Data Quality tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+
+Every "View Report" link and the nav bar jump to the matching detail tab; the header search box
+filters the lead queue. **Demo script (≈90 s):** Run Sample → point at the funnel narrowing at
+"Skill match found" (only 10 reps) → Run Scale → read row 3 aloud → click a Critical lead in the
+queue → open Manager Review → Reset.
+
 ## Folder layout
 
 ```
-backend/
+./
+├── app/                   the dashboard
+│   ├── main.py            layout + callbacks
+│   ├── charts.py          every chart (Plotly), Lightning colors
+│   ├── grid_server.py     server-side paging for the 50k-row table
+│   └── assets/            CSS, count-up animation, table cell renderers
 ├── config/rules.yaml      ← ALL business numbers: points, tiers, aliases, capacities, routing order
 ├── data/                  ← the challenge CSVs
 ├── lead_router/

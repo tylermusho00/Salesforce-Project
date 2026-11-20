@@ -25,3 +25,6 @@ Thumbs.db
 
 # Uncomment if the challenge data must not be published:
 # data/*.csv
+
+# Local Claude Code preview settings
+.claude/
