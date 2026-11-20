@@ -120,26 +120,23 @@ def metric(key: str, title: str, tab: str, report: str, small: bool = False) -> 
 
 
 def global_header() -> html.Div:
+    """Logo + search. Pressing Enter in the search box filters the lead queue and scrolls down to it."""
     return html.Div(className="global-header", children=[
         html.Div("LR", className="app-logo", title="Lead Router"),
         html.Div(className="global-search", children=dcc.Input(
-            id="global-search", type="search", placeholder="Search leads, companies or reps...",
+            id="global-search", type="search", placeholder="Search leads, companies or reps, then press Enter",
             debounce=True, n_submit=0)),
-        html.Div(className="header-icons", children=[
-            html.Span("★"), html.Span("?"), html.Span("⚙"), html.Span("🔔"),
-            html.Div("SO", className="avatar", title="Sales Operations"),
-        ]),
     ])
 
 
 def app_nav() -> html.Div:
+    """Every nav item does something: opens a detail tab and scrolls to it, or back to the top."""
     def item(label: str, tab: str | None = None, active: bool = False):
         if tab:
             return html.A(label, href="#details", className="nav-item",
                           id={"type": "open-tab", "tab": tab, "key": f"nav-{label}"})
         return html.A(label, href="#top", className="nav-item" + (" active" if active else ""))
     return html.Div(className="app-nav", children=[
-        html.Div(className="app-launcher", children=[html.Span() for _ in range(9)]),
         html.Div("Lead Router", className="app-name"),
         item("Home"), item("Leads", "queue"), item("Reps", "capacity"),
         item("Dashboards", active=True), item("Manager Review", "review"), item("Data Quality", "quality"),
@@ -193,32 +190,30 @@ def empty_state() -> html.Div:
 
 
 def canvas() -> html.Div:
+    # All components sit in ONE grid row, so the gap between boxes is the same everywhere,
+    # side to side and top to bottom (set by --gap in style.css).
     col = lambda child, lg, md=12: dbc.Col(child, xs=12, md=md, lg=lg)
-    return html.Div(id="canvas", style={"display": "none"}, children=[
-        dbc.Row([
-            col(component("Leads by Priority Tier", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
-            col(component("Lead Routing Funnel", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
-            col(html.Div(className="d-flex flex-column gap-2 h-100", children=[
-                metric("assigned", "Leads Assigned to Reps", "queue", "Prioritized Lead Queue", small=True),
-                metric("review", "Waiting in Manager Review", "review", "Manager Review", small=True),
-            ]), 3, 6),
-        ]),
-        dbc.Row(className="mt-0", children=[
-            col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
-            col(component("Where Leads Went (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
-            col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 4),
-        ]),
-        dbc.Row([
-            col(metric("critical", "Critical Leads Handled by Seniors", "queue", "Prioritized Lead Queue"), 3, 6),
-            col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), 3, 6),
-            col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), 3, 6),
-            col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), 3, 6),
-        ]),
-        dbc.Row([
-            col(component("Capacity Used by Seniority", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
-            col(component("Team Capacity: Reps by % Full", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
-        ]),
-    ])
+    return html.Div(id="canvas", style={"display": "none"}, children=dbc.Row(className="canvas-grid", children=[
+        # Row 1
+        col(component("Leads by Priority Tier", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
+        col(component("Lead Routing Funnel", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
+        col(html.Div(className="metric-stack", children=[
+            metric("assigned", "Leads Assigned to Reps", "queue", "Prioritized Lead Queue", small=True),
+            metric("review", "Waiting in Manager Review", "review", "Manager Review", small=True),
+        ]), 3, 6),
+        # Row 2
+        col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
+        col(component("Where Leads Went (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
+        col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 4),
+        # Row 3: big numbers
+        col(metric("critical", "Critical Leads Handled by Seniors", "queue", "Prioritized Lead Queue"), 3, 6),
+        col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), 3, 6),
+        col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), 3, 6),
+        col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), 3, 6),
+        # Row 4
+        col(component("Capacity Used by Seniority", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
+        col(component("Team Capacity: Reps by % Full", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
+    ]))
 
 
 # ---- detail tabs --------------------------------------------------------------------
@@ -338,7 +333,7 @@ def quality_tab() -> html.Div:
 
 
 def details() -> html.Div:
-    return html.Div(id="details", className="component details mt-2", style={"display": "none"}, children=
+    return html.Div(id="details", className="component details", style={"display": "none"}, children=
         dbc.Tabs(id="tabs", active_tab="queue", children=[
             dbc.Tab(queue_tab(), label="Prioritized Lead Queue", tab_id="queue"),
             dbc.Tab(review_tab(), label="Manager Review", tab_id="review", id="tab-review"),
@@ -362,6 +357,7 @@ def layout() -> html.Div:
         dcc.Store(id="run-store", data={"run_id": 0}),
         dcc.Store(id="up-leads-store"),
         dcc.Store(id="up-reps-store"),
+        dcc.Store(id="scroll-done"),  # dummy output for the search-scroll callback
     ])
 
 
@@ -539,6 +535,29 @@ def open_tab(clicks):
 def global_search(text):
     """The search box in the header filters the lead queue and switches to it."""
     return text or "", "queue"
+
+
+# Runs in the browser (no server round trip): after a search, scroll down to the lead queue
+# so the results are on screen. Before the first run there is no queue yet, so it scrolls to
+# the "ready for data" box instead.
+app.clientside_callback(
+    """
+    function(nSubmit, value) {
+        function scrollToResults() {
+            var details = document.getElementById('details');
+            var target = (details && details.style.display !== 'none') ? details
+                       : document.getElementById('empty-state');
+            if (target) { target.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+        }
+        setTimeout(scrollToResults, 250);   // start moving right away
+        setTimeout(scrollToResults, 1200);  // and settle exactly once the filtered table has loaded
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("scroll-done", "data"),
+    Input("global-search", "n_submit"), Input("global-search", "value"),
+    prevent_initial_call=True,
+)
 
 
 # ======================================================================================
