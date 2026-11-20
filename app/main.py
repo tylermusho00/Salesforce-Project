@@ -102,7 +102,7 @@ def metric(key: str, title: str, tab: str, report: str, small: bool = False) -> 
 def global_header() -> html.Div:
     """Logo + search. Pressing Enter in the search box filters the lead queue and scrolls down to it."""
     return html.Div(className="global-header", children=[
-        html.Div("LR", className="app-logo", title="Lead Router"),
+        html.Img(src="/assets/salesforce-logo.svg", alt="Salesforce", className="app-logo"),
         html.Div(className="global-search", children=dcc.Input(
             id="global-search", type="search", placeholder="Search leads, companies or reps, then press Enter",
             debounce=True, n_submit=0)),
@@ -134,9 +134,7 @@ def page_header() -> html.Div:
         html.Div(DASHBOARD_ICON, className="page-icon"),
         html.Div(className="page-titles", children=[
             html.Div("Dashboard", className="page-eyebrow"),
-            html.H1("Lead Routing Command Center", className="page-title"),
-            html.Div("Every inbound lead scored, prioritized and routed to the right rep by region, "
-                     "language, industry, seniority and live capacity. Nothing dropped.", className="page-desc"),
+            html.H1("Lead Routing Dashboard", className="page-title"),
             dcc.Loading(type="dot", color="#0176D3", children=html.Div(
                 id="as-of", className="page-meta", children="No data yet · Viewing as Sales Operations")),
         ]),
@@ -346,7 +344,7 @@ def layout() -> html.Div:
     ])
 
 
-app = Dash(__name__, title="Lead Routing Command Center", external_stylesheets=[dbc.themes.BOOTSTRAP],
+app = Dash(__name__, title="Lead Routing Dashboard", external_stylesheets=[dbc.themes.BOOTSTRAP],
            suppress_callback_exceptions=True)  # some components live in tabs not rendered yet
 app.layout = layout
 server = app.server  # for a production server such as gunicorn / waitress
