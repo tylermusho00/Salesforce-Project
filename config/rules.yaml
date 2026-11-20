@@ -1,0 +1,123 @@
+# Lead Router business rules.
+# Everything a sales-ops admin might want to tweak lives here, NOT in the code.
+# Baseline values come from scoring_logic_cheat_sheet.pdf and data_dictionary.pdf.
+
+canonical:
+  region: [North America, Europe, Asia-Pacific]
+  language: [English, Spanish, German]
+  industry: [Technology, Finance, Healthcare, Manufacturing, Retail]
+  seniority: [Junior, Senior, Manager]
+  activity:
+    - Requested Live Demo
+    - Contact Sales
+    - Attended Webinar
+    - Downloaded Whitepaper
+    - Visited Pricing Page
+    - Started Free Trial
+    - Opened Marketing Email
+    - Subscribed to Blog
+
+# Keys are matched AFTER normalize_text() (lowercase, punctuation -> space, collapsed spaces).
+aliases:
+  region:
+    na: North America
+    n america: North America
+    nort america: North America
+    north amer: North America
+    noram: North America
+    amer: North America
+    us: North America
+    usa: North America
+    eur: Europe
+    europ: Europe
+    eu: Europe
+    emea: Europe
+    apac: Asia-Pacific
+    asa pacific: Asia-Pacific
+    asia pac: Asia-Pacific
+    ap: Asia-Pacific
+  language:
+    en: English
+    eng: English
+    es: Spanish
+    esp: Spanish
+    spa: Spanish
+    espanol: Spanish
+    de: German
+    ger: German
+    deu: German
+    deutsch: German
+  industry:
+    tech: Technology
+    it: Technology
+    software: Technology
+    fin: Finance
+    financial services: Finance
+    banking: Finance
+    health: Healthcare
+    medical: Healthcare
+    mfg: Manufacturing
+    manufacture: Manufacturing
+    retail trade: Retail
+  seniority:
+    jr: Junior
+    jnr: Junior
+    sr: Senior
+    snr: Senior
+    mgr: Manager
+    mngr: Manager
+
+# Values that mean "we don't know" (compared after normalize_text).
+missing_tokens: ["", "n a", "null", "none", "nan", "unknown", "unk", "tbd", "not available"]
+
+# rapidfuzz similarity (0-100) required to accept a typo correction.
+fuzzy_threshold: 85
+
+scoring:
+  vip_score: 100
+  company_size:
+    # Checked top-down; first band whose min the size meets wins.
+    bands:
+      - {name: "Enterprise (1,000+)", min: 1000, points: 50}
+      - {name: "Mid-Market (100-999)", min: 100, points: 30}
+      - {name: "SMB (1-99)", min: 1, points: 0}
+    missing_points: 20          # cheat-sheet fallback
+  recent_activity:
+    points:
+      Requested Live Demo: 35
+      Contact Sales: 35
+      Attended Webinar: 25
+      Downloaded Whitepaper: 15
+      Visited Pricing Page: 5
+    default_points: 0           # any other / missing activity (cheat sheet)
+  industry:
+    points:
+      Technology: 15
+      Healthcare: 10
+      Finance: 10
+      Manufacturing: 0
+      Retail: 0
+    missing_points: 5           # neutral: not punished as hard as 0, not rewarded like Healthcare
+  tiers:                        # minimum score for each tier, highest first
+    Critical: 85
+    High: 60
+    Medium: 40
+    Low: 0
+
+routing:
+  # Default max capacity when a rep's value is missing/unparseable (midpoint of the dictionary's range).
+  default_max_capacity:
+    Junior: 45
+    Senior: 22
+    Manager: 7
+  # Seniority groups tried in order. Reps inside a group compete on load (least-loaded, round-robin ties).
+  seniority_order:
+    Critical: [[Senior], [Manager]]                 # Never Junior.
+    default: [[Junior, Senior], [Manager]]         # Managers last: protect their small capacity.
+  # When a lead's field was imputed/ambiguous we may relax matching (always logged on the assignment).
+  relax_industry_when_unknown: true
+  try_alternate_region_when_ambiguous: true
+
+datasets:
+  sample: {leads: leads_sample.csv, reps: reps_sample.csv}
+  scale: {leads: leads_scale.csv, reps: reps_scale.csv}

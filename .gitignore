@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment (everyone makes their own: python -m venv .venv)
+.venv/
+venv/
+
+# Test caches
+.pytest_cache/
+.hypothesis/
+.benchmarks/
+
+# Files you generate locally
+results*.csv
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Uncomment if the challenge data must not be published:
+# data/*.csv

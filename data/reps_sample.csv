@@ -1,0 +1,11 @@
+Rep_ID,Name,Region,Language,Industry_Vertical_Expertise,Seniority_Level,Current_Capacity,Max_Capacity
+R-1,Michael Thompson (R-1),north america,German,Unknown,MGR,0,5
+R-2,Avery Davis (R-2),Europ,Spanish, Finance,sr,0,22
+R-3,Noah Singh (R-3),europe,Spanish,Manufacturing, junior,0,47
+R-4,Amelia Williams (R-4),North  Amer,ES,Technology ,Mgr,0,6
+R-5,Elena Patel (R-5),Europ,ES,Unknown,sr,0,25
+R-6,Logan Moore (R-6),Europ,German,Healthcare,Junior,0,47
+R-7,Benjamin Martinez (R-7),europe,german,Unknown, junior,0,42
+R-8,Michael Ali (R-8),Asa-Pacific,German,Manufacturing,Jr,0,49
+R-9,Maria Harris (R-9), North America ,spanish,Technology,SR,0,-20
+R-10,Liam Patel (R-10),North  Amer,DE, Finance,Mgr,0,6

@@ -1,0 +1,101 @@
+Lead_ID,Company_Name,Region,Language,Industry_Vertical,Company_Size,Recent_Activity,VIP_Referral
+L-1001,Astra Cloud 29 International,Asa-Pacific,ES,Manufacturing,1015,N/A,True
+L-1002,Crest Capital 25 Corp,Asa-Pacific,german, Finance,566,N/A,Unknown
+L-1003,Orbit Security 17 Ltd,Europ,ES,Healthcare,5k,Subscribed to Blog,Unknown
+L-1004,VANGUARD VENTURES 26 GROUP,NORTH   AMERICA Asia-Pacific ,German,Retail,78,Requested Live Demo,True
+L-1005,Velocity Digital 8 International,EUR,DE,Retail,20,Requested Live Demo,False
+L-1006,Aegis Networks 7 International, EUROPE ,english,Technology ,3258,requested live demo ,False
+L-1007,Lumina Dynamics 6 Inc,Asia.  Pacific,Spanish,Retail,81,Unknown,False
+L-1008,Kinetix Tech 14 Ltd,Europ,german,Technology,4865,,True
+L-1009,Beacon Media 27 Corp,EUR,english,Healthcare,16,requested live demo ,False
+L-1010,Summit Media 9 LLC,asia-pacific,ES,Retail,None,Downloaded Whitepaper,False
+L-1011,Velocity Ventures 3 International,Nort America,DE,Retail,45,Contact Sales,False
+L-1012,VANGUARD VENTURES 26 GROUP,Asia.  Pacific,german,Retail,78,Opened Marketing Email,False
+L-1013,Aegis Networks 7 International,NA,DE,Technology ,3258,Contact Sales,Unknown
+L-1014,Lumina Dynamics 6 Inc,ASIA   PACIFICEurope,DE,Retail,81,N/A,False
+L-1015,Nexus Energy 10 Group,NORTH   AMERICA Asia-Pacific ,german,Unknown,301,requested live demo ,False
+L-1016,HORIZON HEALTH 15 HOLDINGS,NA,spanish,Retail,5726,Unknown,False
+L-1017,Aegis Networks 7 International,asia-pacific,spanish,Technology ,3258,Attended Webinar,False
+L-1018,Lumina Networks 24 Ltd,europe,english,Unknown,233,Opened Marketing Email,False
+L-1019,Kinetix Solutions 2 Holdings,NORTH   AMERICA Asia-Pacific ,German,Healthcare,4207,Started Free Trial,False
+L-1020,Astra Cloud 29 International,EUR,german,Manufacturing,1015,Attended Webinar,False
+L-1021,HORIZON HEALTH 15 HOLDINGS,asia-pacific,DE,Retail,5726,Subscribed to Blog,False
+L-1022,Synergy Logistics 18 Ltd,north america,ES,Technology,56,Started Free Trial,False
+L-1023,Orbit Security 17 Ltd,Asia.  Pacific,EN,Healthcare,5k,Visited Pricing Page,False
+L-1024,Summit Financial 20 Ltd,NORTH   AMERICA Asia-Pacific ,EN,Technology ,1259,Requested Live Demo,False
+L-1025,Summit Media 9 LLC,NORTH   AMERICA Asia-Pacific ,EN,Retail,None,Started Free Trial,False
+L-1026,Summit Logistics 11 LLC, EUROPE ,English,Unknown,283,Unknown,False
+L-1027,Nexus Energy 10 Group,north america,ES,Unknown,301, Contact Sales,True
+L-1028,VANGUARD VENTURES 26 GROUP,Asa-Pacific,spanish,Retail,78,N/A,False
+L-1029,Orbit Tech 28 Inc,NORTH   AMERICA Asia-Pacific ,English,Technology,749,Opened Marketing Email,False
+L-1030,Aegis Networks 7 International, EUROPE ,German,Technology ,3258,Attended Webinar,False
+L-1031,Crest Data 23 Corp,APAC,german,Unknown,64,N/A,False
+L-1032,Starlight Ventures 16 LLC, EUROPE ,spanish,Healthcare,5531,Started Free Trial,False
+L-1033,HORIZON HEALTH 15 HOLDINGS,Asia.  Pacific,spanish,Retail,5726,Downloaded  Whitepaper,True
+L-1034,Orbit Tech 28 Inc,NORTH   AMERICA Asia-Pacific ,spanish,Technology,749,Requested Live Demo,False
+L-1035,Astra Cloud 29 International,Nort America,english,Manufacturing,1015,Attended Webinar,False
+L-1036,Cipher Labs 4 Ltd,Europ,DE, Finance,224,Started Free Trial,False
+L-1037,HORIZON HEALTH 15 HOLDINGS, North America ,german,Retail,5726,Visited Pricing Page,False
+L-1038,Hyperion Solutions 21 Corp,NA,English,Technology ,"1,000",Opened Marketing Email,False
+L-1039,Starlight Ventures 16 LLC,north america,DE,Healthcare,5531,Downloaded  Whitepaper,False
+L-1040,Nexus Energy 10 Group,Asa-Pacific,EN,Unknown,301,Downloaded Whitepaper,False
+L-1041,Aegis Networks 7 International,north america,Spanish,Technology ,3258, Contact Sales,False
+L-1042,VORTEX NETWORKS 30 LLC,APAC,german,Healthcare,"1,000",N/A,False
+L-1043,Summit Logistics 11 LLC,Europ,German,Unknown,283,,True
+L-1044,Aegis Networks 7 International,EUR,German,Technology ,3258,requested live demo ,False
+L-1045,Orbit Tech 28 Inc,Asia.  Pacific,german,Technology,749,Downloaded  Whitepaper,False
+L-1046,Orbit Security 17 Ltd,Asia.  Pacific,spanish,Healthcare,5k,Requested Live Demo,False
+L-1047,Lumina Networks 24 Ltd,APAC,German,Unknown,233,Downloaded Whitepaper,False
+L-1048,Titan Digital 1 LLC, North America ,EN,Finance,75,Downloaded  Whitepaper,False
+L-1049,Velocity Ventures 3 International,EUR,English,Retail,45,Requested Live Demo,False
+L-1050,Titan Digital 1 LLC,NORTH   AMERICA Asia-Pacific ,DE,Finance,75,Contact Sales,Unknown
+L-1051,Aegis Networks 7 International,ASIA   PACIFICEurope,English,Technology ,3258,Attended Webinar,False
+L-1052,Kinetix Solutions 2 Holdings,North  Amer,german,Healthcare,4207,Downloaded Whitepaper,False
+L-1053,VORTEX NETWORKS 30 LLC,APAC,ES,Healthcare,"1,000",Contact Sales,False
+L-1054,Orbit Security 17 Ltd,NORTH   AMERICA Asia-Pacific ,German,Healthcare,5k,Unknown,False
+L-1055,Lumina Dynamics 6 Inc,Europ,EN,Retail,81,Started Free Trial,False
+L-1056,Summit Media 9 LLC, North America ,German,Retail,None,Visited Pricing Page,False
+L-1057,VORTEX NETWORKS 30 LLC,europe,german,Healthcare,"1,000",Downloaded  Whitepaper,False
+L-1057,Velocity Digital 8 International,north america,English,Retail,20,Attended Webinar,False
+L-1059,HORIZON HEALTH 15 HOLDINGS,Europ,spanish,Retail,5726,N/A,False
+L-1060,Synergy Logistics 18 Ltd,North  Amer,ES,Technology,56,Unknown,False
+L-1061,Hyperion Solutions 21 Corp,Asia.  Pacific,german,Technology ,"1,000",Visited Pricing Page,False
+L-1062,Crest Capital 25 Corp, EUROPE ,ES, Finance,566,,False
+L-1063,Crest Capital 25 Corp, EUROPE ,spanish, Finance,566,Opened Marketing Email,Unknown
+L-1064,Vortex Financial 13 Ltd,Europ,EN,Unknown,7931,N/A,False
+L-1065,VANGUARD VENTURES 26 GROUP,APAC,spanish,Retail,78,requested live demo ,Unknown
+L-1066,Lumina Dynamics 6 Inc, EUROPE ,EN,Retail,81,Downloaded Whitepaper,Unknown
+L-1067,Lumina Dynamics 6 Inc, EUROPE ,English,Retail,81,Contact Sales,False
+L-1068,Summit Media 9 LLC,ASIA   PACIFICEurope,spanish,Retail,None,Downloaded  Whitepaper,False
+L-1069,Lumina Networks 24 Ltd,Asa-Pacific,DE,Unknown,233,requested live demo ,False
+L-1070,Nexus Energy 10 Group,NORTH   AMERICA Asia-Pacific ,ES,Unknown,301,N/A,False
+L-1071,HORIZON HEALTH 15 HOLDINGS,north america,EN,Retail,5726,,False
+L-1072,Crest Capital 25 Corp,Asia.  Pacific,Spanish, Finance,566,Subscribed to Blog,False
+L-1073,VANGUARD VENTURES 26 GROUP,Asia.  Pacific,ES,Retail,78,Visited Pricing Page,False
+L-1074,VANGUARD VENTURES 26 GROUP,Nort America,spanish,Retail,78,Downloaded  Whitepaper,False
+L-1075,VORTEX NETWORKS 30 LLC,europe,DE,Healthcare,"1,000",,False
+L-1076,Crest Data 23 Corp,north america,Spanish,Unknown,64,requested live demo ,False
+L-1077,VORTEX NETWORKS 30 LLC, North America ,Spanish,Healthcare,"1,000",Requested Live Demo,False
+L-1078,Summit Logistics 11 LLC,Asia.  Pacific,ES,Unknown,283,Attended Webinar,False
+L-1079,Cipher Labs 4 Ltd,APAC,DE, Finance,224, Contact Sales,False
+L-1080,Synergy Logistics 18 Ltd, North America ,German,Technology,56,Downloaded Whitepaper,False
+L-1081,Velocity Ventures 3 International,NA,English,Retail,45,Attended Webinar,False
+L-1082,Beacon Media 27 Corp,north america,german,Healthcare,16,,False
+L-1083,Velocity Digital 8 International,ASIA   PACIFICEurope,German,Retail,20,Contact Sales,False
+L-1084,Meridian Financial 12 Inc,NORTH   AMERICA Asia-Pacific ,Spanish,Technology ,93,Contact Sales,False
+L-1085,Orbit Security 17 Ltd,Asia.  Pacific,spanish,Healthcare,5k,N/A,False
+L-1086,Crest Capital 25 Corp, EUROPE ,DE, Finance,566,Downloaded  Whitepaper,False
+L-1087,Cipher Labs 4 Ltd,EUR,EN, Finance,224,Opened Marketing Email,False
+L-1088,HORIZON HEALTH 15 HOLDINGS,europe,DE,Retail,5726,Attended Webinar,False
+L-1089,Crest Data 23 Corp,Asa-Pacific,english,Unknown,64,Requested Live Demo,False
+L-1090,Lumina Dynamics 6 Inc,asia-pacific,german,Retail,81,Attended Webinar,False
+L-1091,Summit Media 9 LLC,NA,English,Retail,None,Started Free Trial,False
+L-1092,HORIZON HEALTH 15 HOLDINGS,North  Amer,DE,Retail,5726,Attended Webinar,False
+L-1093,Orbit Tech 28 Inc, North America ,Spanish,Technology,749,Visited Pricing Page,False
+L-1094,Cipher Labs 4 Ltd,Asia.  Pacific,German, Finance,224,Downloaded Whitepaper,False
+L-1095,CIPHER LABS 5 CORP, EUROPE ,English,Technology,463,Requested Live Demo,False
+L-1096,Starlight Ventures 16 LLC,EUR,ES,Healthcare,5531,,False
+L-1097,Lumina Dynamics 6 Inc, North America ,German,Retail,81,Attended Webinar,False
+L-1098,Kinetix Tech 14 Ltd,North  Amer,Spanish,Technology,4865,requested live demo ,False
+L-1099,VORTEX NETWORKS 30 LLC,EUR,EN,Healthcare,"1,000",Requested Live Demo,False
+L-1100,Orbit Security 17 Ltd,Asia.  Pacific,english,Healthcare,5k,Contact Sales,False

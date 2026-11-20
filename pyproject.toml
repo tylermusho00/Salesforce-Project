@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lead-router"
+version = "0.2.0"
+description = "Salesforce Ignite Challenge: lead cleaning, scoring and routing engine."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",      # reading CSVs, building result tables
+    "rapidfuzz>=3.9",   # typo matching ("Asa-Pacific" -> "Asia-Pacific")
+    "pyyaml>=6.0",      # reading config/rules.yaml
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",            # test runner
+    "hypothesis>=6.100",    # random messy data tests
+    "pytest-benchmark>=4",  # timing the 50k dataset
+]
+
+[project.scripts]
+leadrouter = "lead_router.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lead_router*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]   # tests can import lead_router even without `pip install -e .`
