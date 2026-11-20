@@ -114,6 +114,10 @@ routing:
   seniority_order:
     Critical: [[Senior], [Manager]]                 # Never Junior.
     default: [[Junior, Senior], [Manager]]         # Managers last: protect their small capacity.
+  # How to choose between equally qualified reps (see lead_router/distribution.py):
+  #   fair_share   capacity-weighted fair round-robin (ours, recommended)
+  #   least_loaded | round_robin | first_match   baselines for comparison
+  distribution_strategy: fair_share
   # When a lead's field was imputed/ambiguous we may relax matching (always logged on the assignment).
   relax_industry_when_unknown: true
   try_alternate_region_when_ambiguous: true

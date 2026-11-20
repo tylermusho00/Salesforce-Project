@@ -28,6 +28,7 @@ leadrouter run --dataset sample          # 100 leads, 10 reps
 leadrouter run --dataset scale           # 50,000 leads, 1,600 reps
 leadrouter run --dataset scale --out results.csv
 leadrouter run --leads my_leads.csv --reps my_reps.csv
+leadrouter compare --dataset scale       # distribution strategies side by side
 
 pytest -q                                # all tests (~10 s)
 ```
@@ -81,11 +82,13 @@ queue → open Manager Review → Reset.
 │   ├── cleaning.py        STEP 1  messy rows → clean objects
 │   ├── scoring.py         STEP 2  points → Critical / High / Medium / Low
 │   ├── routing.py         STEP 3  leads → reps (the core algorithm)
+│   ├── distribution.py    how ties between equally qualified reps are broken + fairness math
 │   ├── pipeline.py        STEP 4  runs everything, times it, computes KPIs
 │   ├── export.py          results → tables / CSV (incl. Salesforce Data Loader file)
 │   └── cli.py             the `leadrouter` command
 ├── tests/                 pytest: unit, property-based (hypothesis), benchmark
-└── docs/ARCHITECTURE.md   deeper walkthrough + diagram
+├── docs/ARCHITECTURE.md   deeper walkthrough + diagram
+└── docs/DISTRIBUTION.md   the fair round-robin method, worked example, measurements
 ```
 
 Start reading at `pipeline.py` (the big picture), then `routing.py` (the interesting part).
@@ -132,18 +135,31 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
    its second region. Language is never relaxed.
 4. **Seniority.** Critical → Senior, then Manager, **never Junior**. Others → Junior or Senior, then
    Manager (Managers have small capacity, so they're saved for overflow).
-5. **Fair distribution: least-loaded first, round-robin on ties.** Among the eligible reps, pick:
-   - the lowest **load ratio** (current ÷ max), so a 50-slot Junior and a 22-slot Senior fill evenly;
-   - if tied, whoever got a lead **longest ago** (rotation);
-   - if still tied, file order.
+5. **Fair distribution: Capacity-Weighted Fair Round-Robin.** Among the eligible reps, pick:
+   - the smallest **virtual finish time** `(leads held + 1) ÷ max capacity` (Weighted Fair Queuing),
+     so a 50-slot Junior gets 2.5× the leads of a 20-slot one and both fill at the same pace;
+   - if tied, whoever has received the least **lead value** (sum of scores) per slot, so the good
+     leads are shared, not just the count;
+   - if still tied, whoever got a lead **longest ago** (round-robin rotation);
+   - if still tied, file order (100% reproducible).
+
+   Full explanation, worked example and measurements: **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
 6. **Capacity.** Each assignment adds 1 to the rep's load; a full rep leaves the pools.
 7. **Overflow.** No free rep → **Manager Review** with a reason: *No matching rep*,
    *All eligible reps at capacity*, *No Senior/Manager for Critical lead*, or
    *Missing region or language*.
 
-**Why least-loaded + round-robin?** Pure round-robin ignores that reps have different capacities;
-pure least-loaded keeps picking the same rep when loads tie. Combining them spreads work in
-proportion to each rep's capacity and still rotates fairly. Each pool holds only ~10–30 reps,
+**Why this method?** Measured with Jain's fairness index (1.0 = perfectly even) on the 50,000 leads,
+`leadrouter compare --dataset scale`:
+
+| Strategy | Workload fairness | After first 10% | Critical → Senior (live arrivals) |
+|---|---|---|---|
+| **Fair round-robin (ours)** | **0.992** | **0.991** | **90.9%** |
+| Plain round-robin | 0.987 | 0.982 | 61.4% |
+| First match | 0.612 | 0.418 | 84.9% |
+
+Plain round-robin ignores capacity, so Seniors fill up early and Critical leads spill over;
+first-match buries a few reps while the rest sit idle. Each pool holds only ~10–30 reps,
 so checking them all per lead is fast.
 
 ## Changing the rules
@@ -166,6 +182,7 @@ Then run `pytest -q`.
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
 | `test_routing.py` | Junior never gets Critical, Senior before Manager, capacity never exceeded, even split, overflow reasons, nothing dropped |
+| `test_distribution.py` | proportional to capacity, interleaved not bursty, value tie-break, rotation, reproducible, every strategy obeys the rules |
 | `test_pipeline.py` | empty file, one lead, zero reps, reset, clear error messages |
 | `test_properties.py` | 150 batches of random garbage never crash the pipeline or break the rules |
 | `test_benchmark.py` | 50,000 leads finish under 10 s |

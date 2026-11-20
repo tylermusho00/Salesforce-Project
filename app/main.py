@@ -205,11 +205,15 @@ def canvas() -> html.Div:
         col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
         col(component("Where Leads Went (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
         col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 4),
-        # Row 3: big numbers
-        col(metric("critical", "Critical Leads Handled by Seniors", "queue", "Prioritized Lead Queue"), 3, 6),
-        col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), 3, 6),
-        col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), 3, 6),
-        col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), 3, 6),
+        # Row 3: five big numbers, equal widths (nested row so they share one line)
+        dbc.Col(xs=12, children=dbc.Row(className="canvas-grid", children=[
+            dbc.Col(metric("critical", "Critical Leads to Seniors", "queue", "Prioritized Lead Queue"),
+                    xs=12, md=6, lg=True),
+            dbc.Col(metric("fairness", "Distribution Fairness", "capacity", "Rep Capacity"), xs=12, md=6, lg=True),
+            dbc.Col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), xs=12, md=4, lg=True),
+            dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=4, lg=True),
+            dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=4, lg=True),
+        ])),
         # Row 4
         col(component("Capacity Used by Seniority", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
         col(component("Team Capacity: Reps by % Full", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
@@ -430,7 +434,7 @@ def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps):
 # ======================================================================================
 # Callback: redraw the whole dashboard after a run or reset
 # ======================================================================================
-METRIC_KEYS = ["assigned", "review", "critical", "speed", "util", "fixed"]
+METRIC_KEYS = ["assigned", "review", "critical", "fairness", "speed", "util", "fixed"]
 CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-reasons", "ch-capacity", "ch-util"]
 
 
@@ -461,13 +465,14 @@ def render(_store):
         "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% of {m['total_leads']:,} leads"),
         "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
         "critical": (f"{m['critical_senior_rate']}%",
-                     html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} Critical leads · ",
+                     html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
                                 html.Span(f"{m['junior_critical_violations']} given to Juniors", className="metric-good")])),
-        "speed": (f"{m['throughput_lps']:,}", f"{m['total_leads']:,} leads cleaned, scored and routed in {seconds:.2f} s"),
-        "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} rep slots filled · "
+        # captions kept short (two lines max) so the big numbers line up across the row
+        "speed": (f"{m['throughput_lps']:,}", f"{m['total_leads']:,} leads in {seconds:.2f} s"),
+        "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} slots · "
                                          f"{m['capacity_violations']} over capacity"),
-        "fixed": (f"{lq.fixed + rq.fixed:,}", f"aliases, typos and formats repaired · {m['imputed_rate']}% of leads "
-                                              f"had a gap, 0 dropped"),
+        "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had a gap · 0 dropped"),
+        "fairness": (f"{m['fairness_during_run']:.3f}", "Jain index · 1.000 = perfectly even"),
     }
 
     # --- charts

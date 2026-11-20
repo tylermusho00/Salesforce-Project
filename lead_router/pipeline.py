@@ -30,7 +30,8 @@ import pandas as pd
 
 from .cleaning import (LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED, clean_leads,
                        clean_reps, missing_columns, standardize_columns)
-from .config import dataset_paths
+from .config import dataset_paths, load_rules
+from .distribution import DEFAULT_STRATEGY, distribution_fairness
 from .models import Assignment, AssignmentStatus, Lead, PipelineResult, Priority, Rep, Seniority
 from .routing import route_all
 from .scoring import score_all
@@ -135,6 +136,8 @@ def compute_metrics(leads: list[Lead], reps: list[Rep], assignments: list[Assign
         "load_total": total_load,
         "utilization": percent(total_load, total_capacity),
         "rep_utilization": {rep.id: percent(rep.current_capacity, rep.max_capacity) for rep in reps},
+        # Distribution fairness: Jain's index within groups of interchangeable reps (1.0 = perfectly even)
+        "distribution_fairness": distribution_fairness(reps),
         # Speed
         "throughput_lps": round(total / elapsed_seconds) if elapsed_seconds > 0 else 0,
     }
@@ -152,9 +155,12 @@ def timed(timings: dict[str, float], stage: str) -> Iterator[None]:
 
 
 def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: str = "custom",
-                        timings: dict[str, float] | None = None) -> PipelineResult:
-    """Run clean -> score -> route -> metrics on DataFrames that are already loaded."""
+                        timings: dict[str, float] | None = None, strategy: str | None = None,
+                        live: bool = False) -> PipelineResult:
+    """Run clean -> score -> route -> metrics on DataFrames that are already loaded.
+    `strategy` overrides the distribution method from rules.yaml (see distribution.py)."""
     timings = dict(timings or {})
+    strategy = strategy or load_rules()["routing"].get("distribution_strategy") or DEFAULT_STRATEGY
 
     with timed(timings, "clean"):
         leads, lead_quality = clean_leads(leads_df)
@@ -164,11 +170,17 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
         leads = score_all(leads)
 
     with timed(timings, "route"):
-        routed = route_all(leads, reps)
+        routed = route_all(leads, reps, strategy, live)
 
     seconds_so_far = sum(timings.values())
     with timed(timings, "metrics"):
         metrics = compute_metrics(leads, routed.reps, routed.assignments, seconds_so_far)
+        metrics["strategy"] = strategy
+        timeline = routed.fairness_timeline
+        metrics["fairness_timeline"] = timeline
+        # average fairness while leads were being handed out (not just at the end)
+        metrics["fairness_during_run"] = round(sum(timeline) / len(timeline), 4) if timeline else 1.0
+        metrics["value_fairness"] = routed.value_fairness
     timings["total"] = sum(timings.values())
 
     if not reps:
@@ -183,19 +195,19 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
 
 
 def run_pipeline(leads_path: str | Path | Any, reps_path: str | Path | Any,
-                 dataset: str = "custom") -> PipelineResult:
+                 dataset: str = "custom", strategy: str | None = None, live: bool = False) -> PipelineResult:
     """Main entry point: read two CSVs and run every stage."""
     timings: dict[str, float] = {}
     with timed(timings, "load"):
         leads_df = read_csv(leads_path, "Leads", LEAD_COLUMNS, LEAD_REQUIRED)
         reps_df = read_csv(reps_path, "Reps", REP_COLUMNS, REP_REQUIRED)
-    return run_pipeline_frames(leads_df, reps_df, dataset, timings)
+    return run_pipeline_frames(leads_df, reps_df, dataset, timings, strategy, live)
 
 
-def run_dataset(name: str) -> PipelineResult:
+def run_dataset(name: str, strategy: str | None = None, live: bool = False) -> PipelineResult:
     """Run one of the bundled datasets from rules.yaml ("sample" or "scale")."""
     leads_path, reps_path = dataset_paths(name)
-    return run_pipeline(leads_path, reps_path, dataset=name)
+    return run_pipeline(leads_path, reps_path, dataset=name, strategy=strategy, live=live)
 
 
 # ======================================================================================

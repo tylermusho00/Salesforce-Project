@@ -46,11 +46,13 @@ def _caption(fig: go.Figure, text: str) -> None:
                        showarrow=False, font={"size": 11, "color": "#3E3E3C"})
 
 
-def _legend_right(fig: go.Figure, title: str) -> None:
+def _legend_below(fig: go.Figure, y: float = -0.04) -> None:
+    """Horizontal legend centered under the plot, so the chart itself sits in the middle of the card.
+    Bar/column charts pass a lower `y` so the legend clears the axis labels."""
     fig.update_layout(showlegend=True, legend={
-        "title": {"text": title, "font": {"size": 11, "color": AXIS_TEXT}},
-        "x": 1.0, "xanchor": "right", "y": 0.5, "yanchor": "middle",
-        "font": {"size": 11}, "itemclick": False, "itemdoubleclick": False})
+        "orientation": "h", "x": 0.5, "xanchor": "center", "y": y, "yanchor": "top",
+        "font": {"size": 11}, "itemclick": False, "itemdoubleclick": False,
+        "traceorder": "normal"})
 
 
 def empty(height: int = 270) -> go.Figure:
@@ -89,12 +91,11 @@ def routing_funnel(stages: list[tuple[str, int]]) -> go.Figure:
         marker={"colors": [PURPLE, LAVENDER, TEAL, LIGHT_TEAL, ORANGE, PEACH][:len(stages)],
                 "line": {"color": "white", "width": 1}},
         textfont={"color": "white", "size": 12}, aspectratio=1.1, baseratio=0.45,
-        domain={"x": [0.0, 0.55]},
+        domain={"x": [0.15, 0.85], "y": [0.1, 1.0]},
         hovertemplate="%{label}: %{text}<extra></extra>",
     ))
-    _legend_right(fig, "Stage")
+    _legend_below(fig)
     _caption(fig, f"Leads uploaded: {stages[0][1]:,}")
-    fig.layout.annotations[0].x = 0.27
     return fig
 
 
@@ -103,18 +104,17 @@ def routing_funnel(stages: list[tuple[str, int]]) -> go.Figure:
 # ======================================================================================
 def donut(labels: list[str], values: list[int], center: str, legend_title: str,
           colors: list[str] | None = None, caption: str = "Record Count") -> go.Figure:
-    """Donut with the total in the middle and a legend on the right (like 'Sales by Region')."""
+    """Donut with the total in the middle and a legend underneath (like 'Sales by Region')."""
     fig = _base()
     fig.add_pie(labels=labels, values=values, hole=0.62, sort=False, direction="clockwise",
                 marker={"colors": colors or PALETTE, "line": {"color": "white", "width": 2}},
                 textinfo="value", texttemplate="%{value:,}", textposition="outside",
-                textfont={"size": 11, "color": "#3E3E3C"}, domain={"x": [0.0, 0.62]},
+                textfont={"size": 11, "color": "#3E3E3C"}, domain={"x": [0.0, 1.0], "y": [0.14, 1.0]},
                 hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>")
-    fig.add_annotation(text=f"<b>{center}</b>", x=0.31, y=0.5, xref="paper", yref="paper",
+    fig.add_annotation(text=f"<b>{center}</b>", x=0.5, y=0.57, xref="paper", yref="paper",
                        showarrow=False, font={"size": 24, "color": "#181818"})
-    _legend_right(fig, legend_title)
+    _legend_below(fig)
     _caption(fig, caption)
-    fig.layout.annotations[-1].x = 0.31
     return fig
 
 
@@ -136,8 +136,7 @@ def destination_columns(results: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title={"text": "Leads", "font": {"size": 11, "color": AXIS_TEXT}}, tickformat="~s",
                      range=[0, max(totals.max(), 1) * 1.18])
     fig.update_xaxes(showgrid=False)
-    _legend_right(fig, "Priority")
-    fig.update_layout(legend={"x": 1.02, "xanchor": "left"}, margin={"l": 8, "r": 90, "t": 28, "b": 8})
+    _legend_below(fig, y=-0.14)
     _caption(fig, "Record Count")
     return fig
 
@@ -165,7 +164,7 @@ def capacity_by_seniority(reps: pd.DataFrame) -> go.Figure:
     fig.update_layout(barmode="stack", bargap=0.35, margin={"l": 8, "r": 12, "t": 36, "b": 8})
     fig.update_xaxes(range=[0, max(team["max_capacity"].max(), 1) * 1.45], tickformat="~s")
     fig.update_yaxes(showgrid=False, tickfont={"size": 12})
-    fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 1, "y": 1.02, "xanchor": "right",
+    fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 0.5, "y": 1.02, "xanchor": "center",
                                                "yanchor": "bottom", "font": {"size": 11}})
     return fig
 

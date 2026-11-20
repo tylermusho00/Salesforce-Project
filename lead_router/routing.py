@@ -27,11 +27,14 @@ For each lead:
            Critical  -> [Senior]  then  [Manager]          Juniors NEVER get Critical leads
            others    -> [Junior, Senior]  then  [Manager]  Managers last: their capacity is small
 
-    3. Inside the first pool + group that has anyone free, pick the FAIREST rep:
-           a. lowest load ratio (current / max). Ratio, not raw count, so a Junior with 50 slots
-              and a Senior with 22 slots fill up at the same pace.
-           b. tie? the rep who got a lead LONGEST AGO (round-robin rotation).
-           c. still tied (nobody has had a lead yet)? the rep listed first in the file.
+    3. Inside the first pool + group that has anyone free, pick the FAIREST rep using the
+       distribution strategy from distribution.py (default: capacity-weighted fair round-robin):
+           a. smallest "virtual finish time" = (leads held + 1) / max capacity, so a Junior with
+              50 slots gets ~2.5x the leads of a Senior with 20 and both fill at the same pace.
+           b. tie? the rep who has received the least lead VALUE (total score) per slot, so the
+              best leads are shared too, not just the lead count.
+           c. still tied? the rep who got a lead LONGEST AGO (round-robin rotation).
+           d. still tied (nobody has had a lead yet)? the rep listed first in the file.
 
     4. Give the lead to that rep. If the rep is now full, remove them from their pools.
 
@@ -50,6 +53,7 @@ from collections import Counter, defaultdict
 from typing import Iterable
 
 from .config import load_rules
+from .distribution import distribution_fairness, get_strategy
 from .models import (Assignment, AssignmentStatus, Lead, MatchLevel, OverflowReason, Priority,
                      Rep, RoutingResult, Seniority)
 from .scoring import priority_order
@@ -63,7 +67,9 @@ PoolKey = tuple[str, str, str | None]
 class RepPools:
     """Keeps reps grouped by skills and remembers who was served when (for round-robin)."""
 
-    def __init__(self, reps: list[Rep]):
+    def __init__(self, reps: list[Rep], strategy: str | None = None):
+        # how to choose between equally qualified reps (see distribution.py)
+        self.sort_key = get_strategy(strategy)
         # pool key -> reps in that pool who still have free capacity
         self.open_reps: dict[PoolKey, list[Rep]] = defaultdict(list)
         # pool key -> how many reps of each seniority are in it at all (never changes).
@@ -75,11 +81,14 @@ class RepPools:
         self.last_served: dict[str, int] = {}
         # rep id -> position in the original file (final tiebreaker)
         self.file_position: dict[str, int] = {}
+        # rep id -> total score of the leads they hold (for value fairness)
+        self.value_received: dict[str, float] = {}
         self.clock = 0  # goes up by one with every assignment
 
         for position, rep in enumerate(reps):
             self.file_position[rep.id] = position
             self.last_served[rep.id] = -1
+            self.value_received[rep.id] = 0.0
             if rep.region is None or rep.language is None:
                 self.pools_of[rep.id] = []
                 continue  # can't be matched to anyone (flagged "unroutable" during cleaning)
@@ -92,9 +101,10 @@ class RepPools:
                 if not rep.is_full:          # a rep with max capacity 0 never enters a pool
                     self.open_reps[pool].append(rep)
 
-    def fairness_key(self, rep: Rep) -> tuple[float, int, int]:
-        """Smaller = should get the next lead. (load ratio, last served, file position)"""
-        return (rep.load_ratio, self.last_served[rep.id], self.file_position[rep.id])
+    def fairness_key(self, rep: Rep) -> tuple:
+        """Smaller = should get the next lead. The strategy decides what "fair" means."""
+        return self.sort_key(rep, self.value_received[rep.id], self.last_served[rep.id],
+                             self.file_position[rep.id])
 
     def pick_rep(self, pool: PoolKey, allowed: list[Seniority]) -> Rep | None:
         """The fairest free rep in this pool with one of the allowed seniorities, or None."""
@@ -103,9 +113,10 @@ class RepPools:
             return None
         return min(candidates, key=self.fairness_key)
 
-    def assign(self, rep: Rep) -> None:
+    def assign(self, rep: Rep, lead_score: int = 0) -> None:
         """Record one more lead for this rep and take them out of the pools when full."""
         rep.current_capacity += 1
+        self.value_received[rep.id] += lead_score
         self.clock += 1
         self.last_served[rep.id] = self.clock
         if rep.is_full:
@@ -170,7 +181,7 @@ def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
             rep = pools.pick_rep(pool, allowed)
             if rep is None:
                 continue
-            pools.assign(rep)
+            pools.assign(rep, lead.score)
             return assigned(lead, rep, pool, match_level)
 
     # Nobody was free. Work out the most useful reason for the manager.
@@ -186,17 +197,38 @@ def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
     return manager_review(lead, reason, f"{reason.value} (tried {tried})")
 
 
-def route_all(leads: Iterable[Lead], reps: list[Rep]) -> RoutingResult:
+def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = None,
+              live: bool = False) -> RoutingResult:
     """Route every lead, most urgent first.
 
+    `live=True` simulates leads arriving one at a time during the day: they are routed in file
+    order instead of being sorted Critical-first. Used by `leadrouter compare` to show why
+    batching Critical leads first matters and how each strategy copes with mixed arrivals.
+
+    `strategy` picks the distribution method (see distribution.py); by default it comes from
+    rules.yaml (routing.distribution_strategy), which is "fair_share".
     Every lead comes back exactly once: either Assigned or in Manager Review.
     Note: this updates rep.current_capacity on the rep objects you pass in.
     """
     settings = load_rules()["routing"]
-    pools = RepPools(reps)
-    assignments = [route_lead(lead, pools, settings) for lead in sorted(leads, key=priority_order)]
+    pools = RepPools(reps, strategy or settings.get("distribution_strategy"))
+    ordered = sorted(leads, key=(lambda lead: lead.row_number) if live else priority_order)
+
+    # Fairness snapshots at 10%, 20%, ... 100% of the way through, so we can show how even the
+    # distribution is WHILE leads are arriving, not just at the end (see distribution.py).
+    checkpoints = {max(1, round(len(ordered) * step / 10)) for step in range(1, 11)} if ordered else set()
+    fairness_timeline = []
+
+    assignments = []
+    for count, lead in enumerate(ordered, start=1):
+        assignments.append(route_lead(lead, pools, settings))
+        if count in checkpoints:
+            fairness_timeline.append(distribution_fairness(reps))
+    value_fairness = distribution_fairness(reps, pools.value_received)
+
     overflow = [a for a in assignments if a.status is AssignmentStatus.MANAGER_REVIEW]
-    return RoutingResult(assignments=assignments, overflow=overflow, reps=reps)
+    return RoutingResult(assignments=assignments, overflow=overflow, reps=reps,
+                         fairness_timeline=fairness_timeline, value_fairness=value_fairness)
 
 
 # ======================================================================================

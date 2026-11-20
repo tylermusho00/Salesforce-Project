@@ -165,6 +165,8 @@ class RoutingResult:
     assignments: list[Assignment]   # one per lead, in the order they were routed
     overflow: list[Assignment]      # the subset that went to Manager Review
     reps: list[Rep]                 # same rep objects, with updated current_capacity
+    fairness_timeline: list[float] = field(default_factory=list)  # Jain index at 10%, 20%, ... 100%
+    value_fairness: float = 1.0     # Jain index of lead value (score) received per slot
 
 
 @dataclass(slots=True)
