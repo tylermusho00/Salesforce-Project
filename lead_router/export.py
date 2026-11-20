@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .explain import lead_fixes, lead_tags, rep_fixes
 from .models import PipelineResult
 
 RESULT_COLUMNS = ["queue_rank", "lead_id", "company_name", "priority", "score", "status", "rep_id",
                   "rep_name", "rep_seniority", "region", "language", "industry", "company_size",
                   "recent_activity", "vip_referral", "match_level", "overflow_reason", "reason",
-                  "score_explanation", "imputed_fields", "flags"]
+                  "score_explanation", "imputed_fields", "notes", "data_fixes"]
 
 
 def results_frame(result: PipelineResult | None) -> pd.DataFrame:
@@ -46,14 +47,15 @@ def results_frame(result: PipelineResult | None) -> pd.DataFrame:
             "reason": a.reason,
             "score_explanation": l.explanation,
             "imputed_fields": ", ".join(l.imputed_fields),
-            "flags": ", ".join(l.flags),
+            "notes": " | ".join(lead_tags(l, a.match_level)),
+            "data_fixes": "; ".join(f"{field}: {before} -> {after}" for field, before, after in lead_fixes(l)),
         })
     return pd.DataFrame(rows, columns=RESULT_COLUMNS)
 
 
 def reps_frame(result: PipelineResult | None) -> pd.DataFrame:
     cols = ["rep_id", "name", "seniority", "region", "language", "industry", "load",
-            "max_capacity", "utilization", "available", "flags"]
+            "max_capacity", "utilization", "available", "data_fixes"]
     if result is None:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame([{
@@ -62,7 +64,7 @@ def reps_frame(result: PipelineResult | None) -> pd.DataFrame:
         "industry": r.industry or "Unknown", "load": r.current_capacity,
         "max_capacity": r.max_capacity,
         "utilization": round(100 * r.current_capacity / r.max_capacity, 1) if r.max_capacity else 0.0,
-        "available": r.available, "flags": ", ".join(r.flags),
+        "available": r.available, "data_fixes": "; ".join(rep_fixes(r)),
     } for r in result.reps], columns=cols)
 
 

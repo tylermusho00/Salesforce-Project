@@ -46,10 +46,11 @@ For each lead:
     4. Give the lead to that rep. If the rep is now full, remove them from their pools.
 
     5. If no pool/group had anyone free, send the lead to Manager Review with a reason:
-           "No matching rep"                      nobody covers this combination at all
-           "No Senior/Manager for Critical lead"  only Juniors match a Critical lead
-           "All eligible reps at capacity"        the right reps exist but are all full
-           "Too little data to match"             not enough of the 3 traits are known
+           "No rep shares a trait"                nobody shares even 1 of the lead's 3 traits
+           "Urgent lead, only Juniors match"      only Juniors match a Critical lead
+           "Matching reps are all full"           the right reps exist but are all full
+           "Not enough info to match"             region, language and industry all unknown
+       Every decision also gets a plain-English sentence (see explain.py).
 
 Why this is fast enough: a pool holds ~10-30 reps for 1,600 reps total, so step 3 looks at a
 handful of reps per lead. 50,000 leads route in well under a second.
@@ -61,6 +62,7 @@ from typing import Iterable
 
 from .config import load_rules
 from .distribution import distribution_fairness, get_strategy
+from .explain import review_sentence, routing_sentence
 from .models import (Assignment, AssignmentStatus, Lead, MatchLevel, OverflowReason, Priority,
                      Rep, RoutingResult, Seniority)
 from .scoring import priority_order
@@ -226,10 +228,7 @@ def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
     """Find a rep for one lead, or send it to Manager Review with a reason."""
     candidate_pools = pools_to_try(lead, settings)
     if not candidate_pools:
-        missing = [name for name, value in (("region", lead.region), ("language", lead.language),
-                                            ("industry", lead.industry)) if value is None]
-        return manager_review(lead, OverflowReason.MISSING_ROUTING_DATA,
-                              f"Cannot route: missing {', '.join(missing) or 'matching traits'}")
+        return manager_review(lead, OverflowReason.MISSING_ROUTING_DATA)
     groups = seniority_groups(lead.priority, settings)
 
     # Best match first; within a match, preferred seniority first.
@@ -250,8 +249,7 @@ def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
         reason = OverflowReason.NO_SENIOR_AVAILABLE
     else:
         reason = OverflowReason.ALL_AT_CAPACITY
-    tried = ", ".join(describe_pool(pool) for pool in pool_keys)
-    return manager_review(lead, reason, f"{reason.value} (tried {tried})")
+    return manager_review(lead, reason)
 
 
 def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = None,
@@ -300,14 +298,13 @@ def describe_pool(pool: PoolKey) -> str:
 
 
 def assigned(lead: Lead, rep: Rep, pool: PoolKey, match_level: MatchLevel) -> Assignment:
-    note = "" if match_level is MatchLevel.EXACT else f" [{match_level.value}]"
-    reason = (f"{describe_pool(pool)} -> {rep.seniority.value} {rep.name} "
-              f"(load {rep.current_capacity}/{rep.max_capacity}){note}")
+    reason = routing_sentence(lead, rep, match_level)
     return Assignment(lead_id=lead.id, rep_id=rep.id, priority=lead.priority, score=lead.score,
                       reason=reason, status=AssignmentStatus.ASSIGNED, match_level=match_level,
                       rep_name=rep.name, rep_seniority=rep.seniority)
 
 
-def manager_review(lead: Lead, reason: OverflowReason, text: str) -> Assignment:
+def manager_review(lead: Lead, reason: OverflowReason) -> Assignment:
     return Assignment(lead_id=lead.id, rep_id=None, priority=lead.priority, score=lead.score,
-                      reason=text, status=AssignmentStatus.MANAGER_REVIEW, overflow_reason=reason)
+                      reason=review_sentence(lead, reason), status=AssignmentStatus.MANAGER_REVIEW,
+                      overflow_reason=reason)

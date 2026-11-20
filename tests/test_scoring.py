@@ -43,7 +43,7 @@ def test_vip_override_even_with_missing_or_low_value_fields(kwargs):
 
 def test_missing_fields_do_not_crash_and_explain():
     res = score_lead(make_lead(region=None, language=None, industry=None, company_size=None, recent_activity=None))
-    assert res.priority in Priority and "fallback" in res.explanation
+    assert res.priority in Priority and "unknown" in res.explanation
 
 
 def test_score_all_sorts_by_tier_then_score():

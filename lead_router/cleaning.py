@@ -246,8 +246,14 @@ def clean_name(value: Any, fallback: str) -> tuple[str, str]:
         return fallback, MISSING
     name = " ".join(str(value).split())
     if name.isupper() or name.islower():
-        return name.title(), FIXED
+        words = name.title().split()
+        # keep business abbreviations in capitals: "Vortex Networks Llc" -> "Vortex Networks LLC"
+        words = [w.upper() if w.upper() in _KEEP_UPPER else w for w in words]
+        return " ".join(words), FIXED
     return name, OK if name == value else FIXED
+
+
+_KEEP_UPPER = {"LLC", "LLP", "PLC", "LP", "AG", "GMBH", "SA", "NV", "BV", "USA", "UK", "IT", "AI"}
 
 
 # ======================================================================================
@@ -272,10 +278,14 @@ def rows_as_dicts(df: pd.DataFrame, columns: list[str]) -> list[dict[str, Any]]:
     return df.to_dict("records")
 
 
-def _record(report: DataQualityReport, field_name: str, status: str) -> None:
-    """Add a parser's status to the data-quality report (OK is not counted)."""
+def _record(report: DataQualityReport, field_name: str, status: str,
+            before: Any = None, after: Any = None) -> None:
+    """Add a parser's status to the data-quality report (OK is not counted).
+    For fixed values, also keep a few "before -> after" examples to show on the dashboard."""
     if status == FIXED:
         report.count(field_name, "fixed")
+        if before is not None and after is not None:
+            report.example(field_name, before, after)
     elif status == MISSING:
         report.count(field_name, "imputed")
     elif status == INVALID:
@@ -315,32 +325,33 @@ def clean_lead_row(row: dict[str, Any], row_number: int, cleaners: dict[str, Can
         report.count("lead_id", "imputed")
 
     company, status = clean_name(row["Company_Name"], "(Unknown company)")
-    _record(report, "company_name", status)
+    _record(report, "company_name", status, row["Company_Name"], company)
 
     region = cleaners["region"].resolve(row["Region"])
-    _record(report, "region", region.status)
+    _record(report, "region", region.status, row["Region"], region.value)
     if region.value is None:
         imputed.append("region")
     if region.alternates:
         flags.append("ambiguous_region")
 
     language = cleaners["language"].resolve(row["Language"])
-    _record(report, "language", language.status)
+    _record(report, "language", language.status, row["Language"], language.value)
     if language.value is None:
         imputed.append("language")
 
     industry = cleaners["industry"].resolve(row["Industry_Vertical"])
-    _record(report, "industry", industry.status)
+    _record(report, "industry", industry.status, row["Industry_Vertical"], industry.value)
     if industry.value is None:
         imputed.append("industry")
 
     company_size, status = parse_company_size(row["Company_Size"])
-    _record(report, "company_size", status)
+    _record(report, "company_size", status, row["Company_Size"],
+            f"{company_size:,}" if company_size is not None else None)
     if company_size is None:
         imputed.append("company_size")
 
     activity = cleaners["activity"].resolve(row["Recent_Activity"])
-    _record(report, "recent_activity", activity.status)
+    _record(report, "recent_activity", activity.status, row["Recent_Activity"], activity.value)
     if activity.value is None:
         imputed.append("recent_activity")
 
@@ -440,15 +451,15 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
 
         # --- Skills
         region = cleaners["region"].resolve(row["Region"])
-        _record(report, "region", region.status)
+        _record(report, "region", region.status, row["Region"], region.value)
         if region.alternates:
             flags.append("ambiguous_region")
 
         language = cleaners["language"].resolve(row["Language"])
-        _record(report, "language", language.status)
+        _record(report, "language", language.status, row["Language"], language.value)
 
         industry = cleaners["industry"].resolve(row["Industry_Vertical_Expertise"])
-        _record(report, "industry", industry.status)
+        _record(report, "industry", industry.status, row["Industry_Vertical_Expertise"], industry.value)
         if industry.value is None:
             flags.append("expertise_unknown")
 
@@ -457,7 +468,7 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
 
         # --- Seniority
         seniority_result = cleaners["seniority"].resolve(row["Seniority_Level"])
-        _record(report, "seniority", seniority_result.status)
+        _record(report, "seniority", seniority_result.status, row["Seniority_Level"], seniority_result.value)
         if seniority_result.value is None:
             flags.append("seniority_defaulted_junior")
         seniority = Seniority(seniority_result.value or Seniority.JUNIOR)
@@ -472,6 +483,7 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
             max_capacity = abs(max_capacity)
             flags.append("negative_max_capacity_fixed")
             report.count("max_capacity", "fixed")
+            report.example("max_capacity", row["Max_Capacity"], max_capacity)
         else:
             _record(report, "max_capacity", status)
 

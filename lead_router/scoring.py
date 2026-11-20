@@ -50,8 +50,8 @@ def score_lead(lead: Lead, rules: dict[str, Any] | None = None) -> ScoreResult:
     # --- VIP override: skip the matrix completely.
     if lead.vip_referral:
         points = int(rules["vip_score"])
-        return ScoreResult(points, Priority.CRITICAL, [("VIP referral (matrix bypassed)", points)],
-                           f"VIP referral -> Critical (score {points})")
+        return ScoreResult(points, Priority.CRITICAL, [("VIP referral: automatically Critical", points)],
+                           f"VIP referral, so it's automatically Critical ({points} points)")
 
     reasons = [
         _company_size_points(lead, rules["company_size"]),
@@ -61,12 +61,12 @@ def score_lead(lead: Lead, rules: dict[str, Any] | None = None) -> ScoreResult:
     total = sum(points for _, points in reasons)
     priority = tier_for(total, rules["tiers"])
     breakdown = "; ".join(f"{label} {points:+d}" for label, points in reasons)
-    return ScoreResult(total, priority, reasons, f"{total} pts -> {priority.value}: {breakdown}")
+    return ScoreResult(total, priority, reasons, f"{total} points = {priority.value} priority. {breakdown}")
 
 
 def _company_size_points(lead: Lead, rules: dict) -> tuple[str, int]:
     if lead.company_size is None:
-        return "Company size unknown (fallback)", int(rules["missing_points"])
+        return "Company size unknown (standard points)", int(rules["missing_points"])
     # Bands are listed biggest first, so the first band the size reaches is the right one.
     for band in rules["bands"]:
         if lead.company_size >= band["min"]:
@@ -78,13 +78,13 @@ def _activity_points(lead: Lead, rules: dict) -> tuple[str, int]:
     points = rules["points"].get(lead.recent_activity) if lead.recent_activity else None
     if points is None:
         label = lead.recent_activity or "No recent activity"
-        return f"{label} (not a scored action)", int(rules["default_points"])
+        return f"{label} (earns no points)", int(rules["default_points"])
     return lead.recent_activity, int(points)
 
 
 def _industry_points(lead: Lead, rules: dict) -> tuple[str, int]:
     if lead.industry is None:
-        return "Industry unknown (neutral)", int(rules["missing_points"])
+        return "Industry unknown (neutral points)", int(rules["missing_points"])
     return f"{lead.industry} industry", int(rules["points"].get(lead.industry, 0))
 
 

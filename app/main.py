@@ -36,6 +36,7 @@ from app import charts
 from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
 from lead_router.config import dataset_paths
+from lead_router.explain import FIELD_LABELS, lead_fixes
 from lead_router.export import reps_frame, results_frame, salesforce_frame
 from lead_router.models import MatchLevel, OverflowReason
 from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, run_dataset, \
@@ -56,31 +57,10 @@ def frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     with _CACHE_LOCK:
         if _CACHE["run_id"] != STATE.run_id:
             results = results_frame(STATE.result)
-            results["badges"] = _badges(results)
             results["_search"] = (results["lead_id"] + " " + results["company_name"] + " " +
                                   results["rep_name"].fillna("") + " " + results["rep_id"].fillna("")).str.lower()
             _CACHE.update(run_id=STATE.run_id, results=results, reps=reps_frame(STATE.result))
         return _CACHE["results"], _CACHE["reps"]
-
-
-def _badges(df: pd.DataFrame) -> pd.Series:
-    """Short flags for the queue's Flags column: VIP, fallback match, ambiguous region, imputed...
-    Built with whole-column string operations (fast) instead of a row-by-row loop."""
-    if df.empty:
-        return pd.Series(dtype=str)
-    match = df["match_level"].fillna("")
-    parts = [
-        df["vip_referral"].map({True: "VIP"}).fillna(""),
-        match.where(match != MatchLevel.EXACT.value, ""),
-        df["flags"].str.contains("ambiguous_region").map({True: "Ambiguous region"}).fillna(""),
-        df["flags"].str.contains("duplicate").map({True: "Duplicate?"}).fillna(""),
-        ("Imputed: " + df["imputed_fields"]).where(df["imputed_fields"] != "", ""),
-    ]
-    joined = parts[0]
-    for part in parts[1:]:
-        joined = joined + " · " + part
-    # remove the separators left around empty parts: " ·  · x" -> "x"
-    return joined.str.replace(r"(\s·\s)+", " · ", regex=True).str.strip(" ·")
 
 
 # ======================================================================================
@@ -233,8 +213,8 @@ QUEUE_COLS = [
     {"field": "region", "headerName": "Region", "width": 135},
     {"field": "language", "headerName": "Language", "width": 110},
     {"field": "industry", "headerName": "Industry", "width": 130},
-    {"field": "badges", "headerName": "Flags", "flex": 1.4, "minWidth": 170, "tooltipField": "badges"},
-    {"field": "reason", "headerName": "Routing Reason", "flex": 3, "minWidth": 300, "tooltipField": "reason"},
+    {"field": "notes", "headerName": "Notes", "flex": 1.4, "minWidth": 170, "tooltipField": "notes"},
+    {"field": "reason", "headerName": "Why this rep?", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
     {"field": "_search", "hide": True},                                   # driven by the search box
     {"field": "_run", "hide": True, "filter": "agNumberColumnFilter"},    # forces a refresh per run
 ]
@@ -281,11 +261,11 @@ def review_tab() -> html.Div:
         {"field": "company_name", "headerName": "Company", "flex": 2, "minWidth": 200},
         {"field": "priority", "headerName": "Tier", "width": 110, "cellRenderer": "TierBadge"},
         {"field": "score", "headerName": "Score", "width": 90, "filter": "agNumberColumnFilter"},
-        {"field": "overflow_reason", "headerName": "Overflow Reason", "flex": 1.5, "minWidth": 220},
+        {"field": "overflow_reason", "headerName": "Why it's here", "flex": 1.5, "minWidth": 210},
         {"field": "region", "headerName": "Region", "width": 135},
         {"field": "language", "headerName": "Language", "width": 110},
         {"field": "industry", "headerName": "Industry", "width": 130},
-        {"field": "reason", "headerName": "Detail", "flex": 3, "minWidth": 300, "tooltipField": "reason"},
+        {"field": "reason", "headerName": "What happened", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
     ]
     return html.Div([
         html.Div("Leads no eligible rep could take. Nothing is dropped: each one needs a manager decision.",
@@ -312,7 +292,8 @@ def capacity_tab() -> html.Div:
          "filter": "agNumberColumnFilter"},
         {"field": "utilization", "headerName": "Used %", "width": 100, "filter": "agNumberColumnFilter"},
         {"field": "available", "headerName": "Open Slots", "width": 110, "filter": "agNumberColumnFilter"},
-        {"field": "flags", "headerName": "Data Fixes", "flex": 1, "minWidth": 150, "tooltipField": "flags"},
+        {"field": "data_fixes", "headerName": "What we fixed in this row", "flex": 1.5, "minWidth": 220,
+         "tooltipField": "data_fixes"},
     ]
     return html.Div([
         dbc.Row(className="g-2 mb-2 toolbar", children=[
@@ -520,12 +501,23 @@ def render(_store):
 
 
 def _quality_table(report) -> list:
-    rows = [{"Field": name.replace("_", " ").title(), "Fixed": v.get("fixed", 0), "Imputed": v.get("imputed", 0),
-             "Invalid": v.get("invalid", 0)} for name, v in report.by_field.items()]
+    """Plain-English data quality: how many values per field we cleaned up, filled in or couldn't read,
+    with real examples from the file."""
+    rows = [{
+        "Field": FIELD_LABELS.get(name, name.replace("_", " ").title()),
+        "Cleaned up": f"{v.get('fixed', 0):,}",
+        "Blank (filled in)": f"{v.get('imputed', 0):,}",
+        "Unreadable": f"{v.get('invalid', 0):,}",
+        "Examples from the file": " · ".join(e.replace(" -> ", " → ") for e in report.examples.get(name, [])) or "—",
+    } for name, v in report.by_field.items()]
     summary = html.Ul(className="hint", children=[
-        html.Li(f"Rows in: {report.rows_in:,} · rows out: {report.rows_out:,}"),
-        html.Li(f"Exact duplicates merged: {report.duplicates_removed:,} · duplicate IDs renamed: "
-                f"{report.duplicate_ids_renamed:,} · possible duplicates flagged: {report.possible_duplicates:,}"),
+        html.Li(f"{report.rows_in:,} rows in the file → {report.rows_out:,} kept. Nothing was thrown away "
+                "except exact copies of the same row."),
+        html.Li(f"{report.duplicates_removed:,} exact copies merged · {report.duplicate_ids_renamed:,} reused IDs "
+                f"renamed so both records are kept · {report.possible_duplicates:,} look-alike rows flagged."),
+        html.Li("Cleaned up = fixed spelling, spacing or format (e.g. \"EUR\" → Europe). "
+                "Blank = no value given, so a safe default was used. "
+                "Unreadable = junk we couldn't interpret, treated as unknown."),
     ])
     return [summary, dbc.Table.from_dataframe(pd.DataFrame(rows), striped=True, hover=True, size="sm",
                                               className="dq-table")]
@@ -663,35 +655,31 @@ def lead_detail(queue_selection, review_selection):
 
     row = lambda label, value: html.Tr([html.Td(label), html.Td(value)])
     points = lambda p: html.Span(f"{p:+d}", className="points-pos" if p > 0 else "points-zero")
-    assigned_to = (f"{decision.rep_name} ({decision.rep_id}, {decision.rep_seniority.value})"
-                   if decision.rep_id else "Manager Review")
+    fixes = lead_fixes(lead)
+    fix_table = (html.Table(className="detail-table fix-table mb-3 w-100", children=[
+                     html.Thead(html.Tr([html.Th("Field"), html.Th("In the file"), html.Th("What we used")])),
+                     html.Tbody([html.Tr([html.Td(f), html.Td(html.Code(b)), html.Td(a)]) for f, b, a in fixes]),
+                 ]) if fixes else html.P("Nothing: this row was already clean.", className="hint mb-3"))
     body = [
         html.Div(className="mb-3", children=[
             html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-2"),
             html.Span(decision.status.value, className="slds-badge " + ("status-assigned" if decision.rep_id else "status-review")),
         ]),
-        html.H6("Score breakdown"),
+        html.H6("Why this priority?"),
         html.Table(className="detail-table mb-1 w-100", children=html.Tbody(
             [row(label, points(p)) for label, p in lead.score_reasons] + [row(html.B("Total"), html.B(f"{lead.score} pts"))])),
-        html.Div("Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39 · VIP always Critical", className="hint mb-3"),
-        html.H6("Routing"),
-        html.Table(className="detail-table mb-3 w-100", children=html.Tbody([
-            row("Assigned to", assigned_to),
-            row("Match", decision.match_level.value if decision.match_level else "—"),
-            row("Explanation", decision.reason),
-        ])),
-        html.H6("Cleaned record"),
-        html.Table(className="detail-table mb-3 w-100", children=html.Tbody([
-            row("Company", lead.company_name), row("Region", lead.region or "Unknown"),
-            row("Alt. regions", ", ".join(lead.alt_regions) or "—"), row("Language", lead.language or "Unknown"),
-            row("Industry", lead.industry or "Unknown"),
-            row("Company size", f"{lead.company_size:,}" if lead.company_size else "Unknown"),
-            row("Recent activity", lead.recent_activity or "—"), row("VIP referral", "Yes" if lead.vip_referral else "No"),
-            row("Imputed fields", ", ".join(lead.imputed_fields) or "None"), row("Flags", ", ".join(lead.flags) or "None"),
-        ])),
-        html.H6("Original CSV row"),
-        html.Table(className="detail-table w-100", children=html.Tbody(
-            [row(k, html.Code(repr(v))) for k, v in lead.raw.items()])),
+        html.Div("Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39 · a VIP referral is always Critical",
+                 className="hint mb-3"),
+        html.H6("Why this rep?" if decision.rep_id else "Why is it waiting for a manager?"),
+        html.P(decision.reason, className="plain-explanation mb-3"),
+        html.H6("What we cleaned up in this lead's data"),
+        fix_table,
+        html.Details(className="hint", children=[
+            html.Summary("Show the original row from the file"),
+            html.Table(className="detail-table w-100 mt-2", children=html.Tbody(
+                [row(k.replace("_", " "), html.Code("(blank)" if v in (None, "") else str(v)))
+                 for k, v in lead.raw.items()])),
+        ]),
     ]
     return True, body, f"{lead.id} · {lead.company_name}"
 
@@ -707,7 +695,7 @@ def export(*_):
     if STATE.result is None:
         return no_update
     results, reps = frames()
-    results = results.drop(columns=["_search", "badges"])
+    results = results.drop(columns=["_search"])
     name = STATE.result.dataset
     match ctx.triggered_id:
         case "exp-results":

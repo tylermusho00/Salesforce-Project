@@ -50,10 +50,10 @@ class AssignmentStatus(StrEnum):
 
 class OverflowReason(StrEnum):
     """Why a lead ended up in Manager Review instead of with a rep."""
-    NO_MATCH = "No matching rep"                                 # nobody covers this region/language/industry
-    ALL_AT_CAPACITY = "All eligible reps at capacity"            # the right reps exist but are full
-    NO_SENIOR_AVAILABLE = "No Senior/Manager for Critical lead"  # only Juniors match a Critical lead
-    MISSING_ROUTING_DATA = "Too little data to match"            # not enough of region/language/industry known
+    NO_MATCH = "No rep shares a trait"                           # nobody shares region, language or industry
+    ALL_AT_CAPACITY = "Matching reps are all full"               # the right reps exist but are full
+    NO_SENIOR_AVAILABLE = "Urgent lead, only Juniors match"      # Critical leads never go to Juniors
+    MISSING_ROUTING_DATA = "Not enough info to match"            # region, language and industry all unknown
 
 
 class MatchLevel(StrEnum):
@@ -162,6 +162,7 @@ class DataQualityReport:
     duplicate_ids_renamed: int = 0  # same ID but different content -> kept, renamed "-2"
     possible_duplicates: int = 0    # same content under a different ID -> kept, flagged
     by_field: dict[str, dict[str, int]] = field(default_factory=dict)  # {"region": {"fixed": 12}, ...}
+    examples: dict[str, list[str]] = field(default_factory=dict)       # {"region": ['"EUR" -> Europe', ...]}
     warnings: list[str] = field(default_factory=list)
 
     def count(self, field_name: str, kind: str) -> None:
@@ -169,6 +170,13 @@ class DataQualityReport:
         setattr(self, kind, getattr(self, kind) + 1)
         per_field = self.by_field.setdefault(field_name, {})
         per_field[kind] = per_field.get(kind, 0) + 1
+
+    def example(self, field_name: str, before: Any, after: Any, limit: int = 3) -> None:
+        """Remember up to `limit` different "before -> after" fixes per field, for the dashboard."""
+        text = f'"{before}" -> {after}'
+        seen = self.examples.setdefault(field_name, [])
+        if len(seen) < limit and text not in seen:
+            seen.append(text)
 
 
 @dataclass(slots=True)

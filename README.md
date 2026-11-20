@@ -83,6 +83,7 @@ queue → open Manager Review → Reset.
 │   ├── scoring.py         STEP 2  points → Critical / High / Medium / Low
 │   ├── routing.py         STEP 3  leads → reps (the core algorithm)
 │   ├── distribution.py    how ties between equally qualified reps are broken + fairness math
+│   ├── explain.py         turns every decision and data fix into a plain-English sentence
 │   ├── pipeline.py        STEP 4  runs everything, times it, computes KPIs
 │   ├── export.py          results → tables / CSV (incl. Salesforce Data Loader file)
 │   └── cli.py             the `leadrouter` command
@@ -159,9 +160,13 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
 
    Full explanation, worked example and measurements: **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
 6. **Capacity.** Each assignment adds 1 to the rep's load; a full rep leaves the pools.
-7. **Overflow.** No free rep → **Manager Review** with a reason: *No matching rep*,
-   *All eligible reps at capacity*, *No Senior/Manager for Critical lead*, or
-   *Too little data to match* (none of the 3 traits known).
+7. **Overflow.** No free rep → **Manager Review** with a reason: *Matching reps are all full*,
+   *Urgent lead, only Juniors match*, *No rep shares a trait*, or *Not enough info to match*.
+8. **Plain-English explanations** (`lead_router/explain.py`). Every decision gets a sentence anyone
+   can read, e.g. *"Close match (2 of 3 traits): no rep matching all 3 was free. Sent to Lucas Ali, a
+   Senior rep who covers Europe and speaks German, but specializes in Retail rather than Finance.
+   Lucas now has 5 of 22 leads."* Every data fix is shown as *in the file → what we used*,
+   e.g. `"5k"` → 5,000 employees.
 
 **Why this method?** Measured with Jain's fairness index (1.0 = perfectly even) on the 50,000 leads,
 `leadrouter compare --dataset scale`:
