@@ -56,11 +56,17 @@ def test_least_loaded_uses_load_ratio_not_raw_count():
 
 
 def test_no_eligible_rep_goes_to_manager_review():
-    # Shares only 1 of 3 traits (industry): not enough even for a 2-of-3 match.
-    reps = [make_rep("S", SR, region="Europe", language="German")]
+    # Shares none of the 3 traits: no match at any tier.
+    reps = [make_rep("S", SR, region="Europe", language="German", industry="Retail")]
     res = route_all([make_lead()], reps)
     a = res.assignments[0]
     assert a.status is AssignmentStatus.MANAGER_REVIEW and a.overflow_reason is OverflowReason.NO_MATCH
+
+
+def test_one_trait_in_common_is_not_enough_when_minimum_is_two(two_trait_minimum):
+    reps = [make_rep("S", SR, region="Europe", language="German")]  # shares only the industry
+    res = route_all([make_lead()], reps)
+    assert res.assignments[0].overflow_reason is OverflowReason.NO_MATCH
 
 
 def test_all_eligible_full_goes_to_manager_review():
@@ -83,9 +89,47 @@ def test_strict_match_on_region_language_and_industry():
 
 
 def test_too_little_data_goes_to_review():
-    # Only 1 trait known (industry): a 2-of-3 match is impossible.
-    res = route_all([make_lead(region=None, language=None)], [make_rep()])
+    # Nothing known about the lead: no tier can match it.
+    res = route_all([make_lead(region=None, language=None, industry=None)], [make_rep()])
     assert res.assignments[0].overflow_reason is OverflowReason.MISSING_ROUTING_DATA
+
+
+def test_only_industry_known_routes_on_one_of_three():
+    res = route_all([make_lead(region=None, language=None)], [make_rep("r")])
+    assert res.assignments[0].rep_id == "r" and res.assignments[0].match_level is MatchLevel.ONLY_INDUSTRY
+
+
+# ---------------------------------------------------------------- 1 of 3: last resort
+def test_two_of_three_beats_one_of_three():
+    reps = [make_rep("one", SR, region="Europe", industry="Retail"),       # language only
+            make_rep("two", SR, max_capacity=10, current=9, industry="Retail")]  # region + language, 90% full
+    res = route_all([make_lead()], reps)
+    assert res.assignments[0].rep_id == "two" and res.assignments[0].match_level is MatchLevel.RELAXED_INDUSTRY
+
+
+def test_falls_back_to_one_of_three_when_better_reps_are_full():
+    reps = [make_rep("exact", SR, max_capacity=1), make_rep("one", SR, region="Europe", industry="Retail")]
+    res = route_all(leads(2), reps)
+    assert [a.rep_id for a in res.assignments] == ["exact", "one"]
+    assert res.assignments[1].match_level is MatchLevel.ONLY_LANGUAGE
+
+
+def test_one_of_three_keeps_language_then_region_then_industry():
+    reps = [make_rep("industry-only", SR, region="Europe", language="German"),
+            make_rep("region-only", SR, language="German", industry="Retail"),
+            make_rep("language-only", SR, region="Europe", industry="Retail")]
+    assert route_all(leads(1), reps).assignments[0].rep_id == "language-only"
+    reps.pop()
+    assert route_all(leads(1), reps).assignments[0].rep_id == "region-only"
+    reps.pop()
+    a = route_all(leads(1), reps).assignments[0]
+    assert a.rep_id == "industry-only" and a.match_level is MatchLevel.ONLY_INDUSTRY
+
+
+def test_one_of_three_never_gives_critical_to_junior():
+    reps = [make_rep("J", JR, region="Europe", industry="Retail")]  # 1 of 3, but a Junior
+    res = route_all(leads(1, priority=CRIT), reps)
+    assert res.assignments[0].overflow_reason is OverflowReason.NO_SENIOR_AVAILABLE
 
 
 def test_missing_region_still_routes_on_language_and_industry():

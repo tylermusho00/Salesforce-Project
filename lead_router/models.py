@@ -53,7 +53,7 @@ class OverflowReason(StrEnum):
     NO_MATCH = "No matching rep"                                 # nobody covers this region/language/industry
     ALL_AT_CAPACITY = "All eligible reps at capacity"            # the right reps exist but are full
     NO_SENIOR_AVAILABLE = "No Senior/Manager for Critical lead"  # only Juniors match a Critical lead
-    MISSING_ROUTING_DATA = "Too little data to match"            # fewer than 2 of region/language/industry known
+    MISSING_ROUTING_DATA = "Too little data to match"            # not enough of region/language/industry known
 
 
 class MatchLevel(StrEnum):
@@ -63,10 +63,15 @@ class MatchLevel(StrEnum):
     RELAXED_INDUSTRY = "2 of 3: region + language"          # industry differs (or is unknown)
     RELAXED_REGION = "2 of 3: language + industry"          # region differs (or is unknown)
     RELAXED_LANGUAGE = "2 of 3: region + industry"          # language differs (or is unknown)
+    ONLY_LANGUAGE = "1 of 3: language"                      # last resort: only the language matches
+    ONLY_REGION = "1 of 3: region"
+    ONLY_INDUSTRY = "1 of 3: industry"
 
     @property
     def traits_matched(self) -> int:
-        return 3 if self in (MatchLevel.EXACT, MatchLevel.ALTERNATE_REGION) else 2
+        if self in (MatchLevel.EXACT, MatchLevel.ALTERNATE_REGION):
+            return 3
+        return 1 if self.value.startswith("1 of 3") else 2
 
 
 # --------------------------------------------------------------------------------------

@@ -118,12 +118,14 @@ routing:
   #   fair_share   capacity-weighted fair round-robin (ours, recommended)
   #   least_loaded | round_robin | first_match   baselines for comparison
   distribution_strategy: fair_share
-  # Matching on the three traits (region, language, industry):
+  # Matching on the three traits (region, language, industry). The lowest tier allowed:
   #   3 = strict: only reps sharing all 3 traits (the brief's literal rule)
-  #   2 = tiered: try all 3 first; if nobody is free, use reps sharing any 2 of the 3
-  min_traits_to_match: 2
+  #   2 = try all 3 first; if nobody is free, reps sharing any 2 of the 3
+  #   1 = then, as a last resort, reps sharing just 1 trait
+  min_traits_to_match: 1
   # For 2-of-3 matches, which trait may differ first. Language last: a rep who speaks the
-  # lead's language is the most useful partial match.
+  # lead's language is the most useful partial match. 1-of-3 matches use the reverse order
+  # (keep language, then region, then industry).
   relax_order: [industry, region, language]
   # An unknown industry may be relaxed even in strict mode; ambiguous regions try their 2nd region.
   relax_industry_when_unknown: true

@@ -5,11 +5,14 @@ THE ALGORITHM IN PLAIN ENGLISH
 ==============================
 
 Setup: put reps into "pools"
-    A pool is every rep sharing the same traits. Each rep sits in 4 pools:
-        ("Europe", "German", "Finance")   all 3 traits          -> used for 3-of-3 matches
+    A pool is every rep sharing the same traits. Each rep sits in 7 pools:
+        ("Europe", "German", "Finance")   all 3 traits          -> 3-of-3 matches
         ("Europe", "German", ANY)         region + language     -> 2-of-3 matches
         (ANY,      "German", "Finance")   language + industry   -> 2-of-3 matches
         ("Europe", ANY,      "Finance")   region + industry     -> 2-of-3 matches
+        (ANY,      "German", ANY)         language only         -> 1-of-3 matches
+        ("Europe", ANY,      ANY)         region only           -> 1-of-3 matches
+        (ANY,      ANY,      "Finance")   industry only         -> 1-of-3 matches
 
 Order: urgent leads first
     Leads are routed Critical -> High -> Medium -> Low (then highest score first),
@@ -22,8 +25,10 @@ For each lead:
            2 of 3   only if nobody with 3 of 3 is free. Which trait gives way first is set in
                     rules.yaml (routing.relax_order); default: industry, then region, then language
                     (a rep who speaks the lead's language is the most useful partial match).
-       Set routing.min_traits_to_match: 3 in rules.yaml for strict 3-of-3 only.
-       A lead with fewer than 2 known traits can't be matched: straight to Manager Review.
+           1 of 3   last resort, only if nobody with 2 of 3 is free. Keeps the most useful trait
+                    first: same language, then same region, then same industry.
+       routing.min_traits_to_match in rules.yaml sets the lowest tier allowed (3 = strict).
+       A lead with no usable traits at all goes straight to Manager Review.
 
     2. Decide which seniorities may take it, in groups (see `seniority_groups`):
            Critical  -> [Senior]  then  [Manager]          Juniors NEVER get Critical leads
@@ -44,7 +49,7 @@ For each lead:
            "No matching rep"                      nobody covers this combination at all
            "No Senior/Manager for Critical lead"  only Juniors match a Critical lead
            "All eligible reps at capacity"        the right reps exist but are all full
-           "Too little data to match"             fewer than 2 of the 3 traits are known
+           "Too little data to match"             not enough of the 3 traits are known
 
 Why this is fast enough: a pool holds ~10-30 reps for 1,600 reps total, so step 3 looks at a
 handful of reps per lead. 50,000 leads route in well under a second.
@@ -69,15 +74,22 @@ PoolKey = tuple[str, str, str | None]
 
 
 def pools_for_rep(rep: Rep) -> list[PoolKey]:
-    """Every pool a rep belongs to: the 3-trait pool plus one pool per pair of known traits."""
+    """Every pool a rep belongs to: all 3 traits, each pair of known traits, each single trait."""
+    region, language, industry = rep.region, rep.language, rep.industry
     pools = []
-    if rep.region and rep.language:
-        pools.append((rep.region, rep.language, rep.industry))   # all 3 traits
-        pools.append((rep.region, rep.language, ANY))            # region + language
-    if rep.language and rep.industry:
-        pools.append((ANY, rep.language, rep.industry))          # language + industry
-    if rep.region and rep.industry:
-        pools.append((rep.region, ANY, rep.industry))            # region + industry
+    if region and language:
+        pools.append((region, language, industry))   # all 3 traits (industry None = generalist)
+        pools.append((region, language, ANY))        # region + language
+    if language and industry:
+        pools.append((ANY, language, industry))      # language + industry
+    if region and industry:
+        pools.append((region, ANY, industry))        # region + industry
+    if language:
+        pools.append((ANY, language, ANY))           # language only
+    if region:
+        pools.append((region, ANY, ANY))             # region only
+    if industry:
+        pools.append((ANY, ANY, industry))           # industry only
     return pools
 
 
@@ -150,6 +162,9 @@ def pools_to_try(lead: Lead, settings: dict) -> list[tuple[PoolKey, MatchLevel]]
         ("Europe", "German", ANY)          2 of 3: region + language
         (ANY,      "German", "Finance")    2 of 3: language + industry
         ("Europe", ANY,      "Finance")    2 of 3: region + industry
+        (ANY,      "German", ANY)          1 of 3: language
+        ("Europe", ANY,      ANY)          1 of 3: region
+        (ANY,      ANY,      "Finance")    1 of 3: industry
     """
     min_traits = settings.get("min_traits_to_match", 3)
     relax_order = settings.get("relax_order", ["industry", "region", "language"])
@@ -176,6 +191,16 @@ def pools_to_try(lead: Lead, settings: dict) -> list[tuple[PoolKey, MatchLevel]]
             pools.append(((ANY, language, industry), MatchLevel.RELAXED_REGION))
         elif trait == "language" and min_traits <= 2 and industry:
             pools += [((region, ANY, industry), MatchLevel.RELAXED_LANGUAGE) for region in regions]
+
+    # ---- 1 of 3: last resort, keep the most useful single trait (reverse of relax_order)
+    if min_traits <= 1:
+        for trait in reversed(relax_order):
+            if trait == "language" and language:
+                pools.append(((ANY, language, ANY), MatchLevel.ONLY_LANGUAGE))
+            elif trait == "region" and regions:
+                pools += [((region, ANY, ANY), MatchLevel.ONLY_REGION) for region in regions]
+            elif trait == "industry" and industry:
+                pools.append(((ANY, ANY, industry), MatchLevel.ONLY_INDUSTRY))
 
     # remove repeats, keep the first (best) label
     seen: set[PoolKey] = set()

@@ -462,13 +462,14 @@ def render(_store):
 
     # --- match quality: 3 of 3 traits vs. 2 of 3 (see routing.pools_to_try)
     levels = m["match_levels"]
-    full_matches = sum(n for name, n in levels.items() if MatchLevel(name).traits_matched == 3)
-    partial_matches = m["assigned"] - full_matches
+    by_traits = {3: 0, 2: 0, 1: 0}
+    for name, count in levels.items():
+        by_traits[MatchLevel(name).traits_matched] += count
 
     # --- big numbers: (value, caption)
     metrics = {
-        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · {full_matches:,} on 3/3 traits · "
-                                           f"{partial_matches:,} on 2/3"),
+        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · traits matched 3/3: {by_traits[3]:,} · "
+                                           f"2/3: {by_traits[2]:,} · 1/3: {by_traits[1]:,}"),
         "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
         "critical": (f"{m['critical_senior_rate']}%",
                      html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
@@ -487,7 +488,7 @@ def render(_store):
         ("Rows uploaded", lq.rows_in),
         ("Unique leads", m["total_leads"]),
         ("Routable", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)),
-        ("2+ traits matched", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
+        ("A trait matched", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
                               - reasons.get(OverflowReason.NO_MATCH.value, 0)),
         ("Assigned to a rep", m["assigned"]),
     ]

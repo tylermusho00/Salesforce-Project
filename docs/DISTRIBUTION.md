@@ -90,19 +90,19 @@ held in reserve on purpose.
 
 | Strategy | Workload fairness (during run) | After first 10% | Value fairness | Assigned | Critical → Senior |
 |---|---|---|---|---|---|
-| **fair_share (ours)** | **0.9916** | **0.9912** | **0.9977** | 98.53% | 98.64% |
-| least_loaded | 0.9916 | 0.9912 | 0.9976 | 98.53% | 98.64% |
-| round_robin | 0.9876 | 0.9816 | 0.9960 | 98.49% | 98.64% |
-| first_match | 0.6192 | **0.4178** | 0.8397 | 98.62% | 98.64% |
+| **fair_share (ours)** | **0.9916** | **0.9912** | **0.9977** | 99.83% | 98.64% |
+| least_loaded | 0.9916 | 0.9912 | 0.9976 | 99.83% | 98.64% |
+| round_robin | 0.9877 | 0.9816 | 0.9960 | 99.83% | 98.64% |
+| first_match | 0.6204 | **0.4178** | 0.8409 | 99.83% | 98.64% |
 
 **Live mode** (leads routed in the order they arrive, priorities mixed, like a real day)
 
 | Strategy | Workload fairness (during run) | After first 10% | Value fairness | Assigned | Critical → Senior |
 |---|---|---|---|---|---|
-| **fair_share (ours)** | **0.9973** | 0.9867 | 0.9928 | 98.90% | **94.45%** |
-| least_loaded | 0.9968 | 0.9908 | 0.9889 | 98.89% | 93.04% |
-| round_robin | 0.9891 | 0.9817 | 0.9942 | 97.92% | **62.19%** |
-| first_match | 0.5730 | **0.1272** | 0.9620 | 98.87% | 88.03% |
+| **fair_share (ours)** | **0.9973** | 0.9867 | 0.9925 | 99.92% | **95.68%** |
+| least_loaded | 0.9966 | 0.9908 | 0.9864 | 99.92% | 94.24% |
+| round_robin | 0.9892 | 0.9817 | 0.9943 | 98.39% | **62.25%** |
+| first_match | 0.5733 | **0.1272** | 0.9642 | 99.91% | 88.98% |
 
 "During run" averages 10 snapshots taken as leads are handed out. A manager looks at the queue
 mid-day, not only at the end.
@@ -113,14 +113,14 @@ mid-day, not only at the end.
   are buried while their teammates sit idle.
 * **round_robin looks fine on paper but breaks the business.** Because it ignores capacity, Seniors
   fill up with ordinary leads early. In live mode only **62%** of Critical leads reach a Senior,
-  versus **94%** with fair_share.
+  versus **96%** with fair_share.
 * **least_loaded is our method's closest relative.** It's layer 1 without the look-ahead, value
   fairness and rotation, and on the batch run the two tie. fair_share pulls ahead when priorities
-  arrive mixed (live mode): better value fairness (0.9928 vs 0.9889), better workload fairness
-  (0.9973 vs 0.9968), and more Critical leads to Seniors (94.45% vs 93.04%). It also guarantees
+  arrive mixed (live mode): better value fairness (0.9925 vs 0.9864), better workload fairness
+  (0.9973 vs 0.9966), and more Critical leads to Seniors (95.68% vs 94.24%). It also guarantees
   rotation on ties instead of relying on file order.
 * **Batching Critical leads first is part of the design.** The same algorithm gets 98.64% of
-  Critical leads to Seniors in batch mode versus 94.45% live, because urgent leads get first pick of
+  Critical leads to Seniors in batch mode versus 95.68% live, because urgent leads get first pick of
   Senior capacity.
 
 ---
@@ -143,7 +143,7 @@ determinism. The live-mode numbers show the difference.
 1,600 reps).
 
 **"What would you add next?"** (1) A **Senior reserve** for live mode: keep e.g. 15% of each Senior's
-slots for Critical leads, which would push the 94% closer to batch-mode's 98.6%. (2) **Performance
+slots for Critical leads, which would push the 96% closer to batch-mode's 98.6%. (2) **Performance
 weighting**: tilt the share toward reps with higher close rates, once that data exists. Both slot in
 as extra terms in the same sort key.
 
