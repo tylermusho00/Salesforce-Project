@@ -156,6 +156,13 @@ def _suggest(lead: Lead, ranked: list[tuple[tuple[str, ...], _Group]], seniority
     # Preference rank of each allowed seniority (e.g. Critical: Senior 0, Manager 1).
     rank_of = {s: i for i, group in enumerate(seniority_groups) for s in group}
     is_critical = lead.priority is Priority.CRITICAL
+    # Fewest shared traits this run accepts for this lead (an unknown industry may be relaxed).
+    required = 2 if (lead.industry is None and relax_unknown_industry) else min_traits
+
+    def exception_note(shared) -> str:
+        """Below the run's matching minimum, more capacity alone won't help: say so."""
+        return (f" Needs a policy exception: this run only allows matches on {min_traits} of 3 traits."
+                if len(shared) < required else "")
 
     # 2. An allowed rep with a free slot, most traits in common first.
     best: tuple | None = None
@@ -175,11 +182,7 @@ def _suggest(lead: Lead, ranked: list[tuple[tuple[str, ...], _Group]], seniority
         capacity.reserve(rep)
         text = (f"Reassign to {rep.name} ({rep.seniority.value}, shares {_traits_text(shared)}, "
                 f"{open_slots} open slot{'s' if open_slots != 1 else ''}).")
-        required = 2 if (lead.industry is None and relax_unknown_industry) else min_traits
-        if len(shared) < required:
-            text += (f" Needs a policy exception: this run only allows matches on "
-                     f"{min_traits} of 3 traits.")
-        return text + hint, rep
+        return text + exception_note(shared) + hint, rep
 
     # 3. Nobody on the whole team shares a single trait: coverage is missing.
     if not ranked or not ranked[0][0]:
@@ -222,7 +225,7 @@ def _suggest(lead: Lead, ranked: list[tuple[tuple[str, ...], _Group]], seniority
     rep, shared = closest
     return (f"Team at capacity: raise {rep.name}'s max capacity ({rep.seniority.value}, shares "
             f"{_traits_text(shared)}, {rep.current_capacity} of {rep.max_capacity} leads) "
-            "or hold for the next cycle." + hint), rep
+            "or hold for the next cycle." + exception_note(shared) + hint), rep
 
 
 def _closest(ranked, capacity: _Capacity, allowed: set[Seniority]) -> tuple[Rep, tuple[str, ...]] | None:

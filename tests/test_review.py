@@ -109,6 +109,14 @@ def test_team_at_capacity_names_the_closest_full_rep():
     assert a.suggested_action.startswith("Team at capacity: raise Rep S's max capacity")
     assert "hold for the next cycle" in a.suggested_action
     assert a.suggested_rep_id == "S"                                     # shares all 3 traits
+    assert "policy exception" not in a.suggested_action                 # 3 of 3: capacity is enough
+
+
+def test_strict_mode_full_partial_match_also_needs_an_exception():
+    reps = [make_rep("S", SR, max_capacity=0, industry="Retail")]       # full, shares 2 of 3
+    a = route_all([make_lead()], reps, min_traits=3).assignments[0]
+    assert a.suggested_action.startswith("Team at capacity: raise Rep S's max capacity")
+    assert "Needs a policy exception: this run only allows matches on 3 of 3 traits." in a.suggested_action
 
 
 def test_last_slot_is_never_promised_twice_and_critical_goes_first():

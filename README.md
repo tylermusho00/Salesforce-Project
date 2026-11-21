@@ -34,7 +34,7 @@ leadrouter run --dataset scale --out results.csv
 leadrouter run --leads my_leads.csv --reps my_reps.csv
 leadrouter compare --dataset scale       # distribution strategies side by side
 
-pytest -q                                # all 217 tests (~5-15 s)
+pytest -q                                # all tests (~5-15 s)
 python scripts/bench.py scale 5          # median timing per stage
 python scripts/baseline.py check <dir>   # prove a change altered no decision (after `save <dir>`)
 ```
