@@ -59,7 +59,7 @@ the profiler switched on.
 4. *No `DataFrame.to_dict`.* Each column is pulled out once as a plain Python list and the rows are
    built with `zip`. Same dictionaries, same keys, same values, less overhead.
 5. *Remember pure results.* `normalize_text` and the text part of `parse_int` always give the same
-   answer for the same input, and the files only contain a few hundred distinct spellings, so
+   answer for the same input, and the files repeat the same spellings over and over, so
    the answers are remembered (`functools.lru_cache`).
 
 **Why the results cannot differ.** The fairness key always ends with the rep's unique file position,
@@ -73,9 +73,9 @@ generated messy leads and 60 small-capacity reps, for every strategy and every m
 ## How the work grows (Big-O in plain words)
 
 Routing one lead costs roughly **pools tried x reps per pool**. A lead tries at most 7 pools
-(or up to about 12 for ambiguous regions) and stops at the first pool with someone free; each pool
+(a few more for an ambiguous region) and stops at the first pool with someone free; each pool
 holds only ~10-30 of the 1,600 reps. So routing 50,000 leads is about
-`leads x pools tried x reps per pool`, a few hundred operations per lead, and it grows in a straight
+`leads x pools tried x reps per pool`, a small, roughly constant amount of work per lead, and it grows in a straight
 line with the number of leads. Doubling the leads about doubles the time. It does not grow with the
 total number of reps, only with how many sit in the pools a lead actually looks at. Cleaning is one
 pass over the rows (the number of distinct spellings only matters for the first time each is seen).
