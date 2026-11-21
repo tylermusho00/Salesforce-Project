@@ -181,7 +181,8 @@ def test_unknown_industry_prefers_generalist_then_relaxes():
     reps = [make_rep("gen", SR, industry=None, max_capacity=1), make_rep("tech", SR, max_capacity=5)]
     res = route_all(leads(2, industry=None), reps)
     assert [a.rep_id for a in res.assignments] == ["gen", "tech"]
-    assert res.assignments[1].match_level is MatchLevel.RELAXED_INDUSTRY
+    # Both only match on region + language: neither is "Exact" (the industry is unknown).
+    assert {a.match_level for a in res.assignments} == {MatchLevel.INDUSTRY_UNKNOWN}
 
 
 def test_known_industry_lead_uses_generalist_only_as_two_of_three():

@@ -27,7 +27,11 @@ For each lead:
                     (a rep who speaks the lead's language is the most useful partial match).
            1 of 3   last resort, only if nobody with 2 of 3 is free. Keeps the most useful trait
                     first: same language, then same region, then same industry.
-       routing.min_traits_to_match in rules.yaml sets the lowest tier allowed (3 = strict).
+       routing.min_traits_to_match in rules.yaml sets the lowest tier allowed (3 = strict);
+       one run can override it with route_all(..., min_traits=3) ("Strict" mode).
+       A lead whose INDUSTRY is unknown can only match on region + language. That missing-data
+       fallback is allowed even in strict mode, and is labelled "Industry unknown: region +
+       language" (never "Exact": Exact means all 3 known traits match).
        A lead with no usable traits at all goes straight to Manager Review.
 
     2. Decide which seniorities may take it, in groups (see `seniority_groups`):
@@ -52,6 +56,9 @@ For each lead:
            "Not enough info to match"             region, language and industry all unknown
        Every decision also gets a plain-English sentence (see explain.py).
 
+    6. When every lead is placed, review.py looks at the Manager Review leads once more, using
+       the capacity that is left, and writes a suggested next step for the manager.
+
 Why this is fast enough: a pool holds ~10-30 reps for 1,600 reps total, so step 3 looks at a
 handful of reps per lead. 50,000 leads route in well under a second.
 """
@@ -65,6 +72,7 @@ from .distribution import distribution_fairness, get_strategy
 from .explain import review_sentence, routing_sentence
 from .models import (Assignment, AssignmentStatus, Lead, MatchLevel, OverflowReason, Priority,
                      Rep, RoutingResult, Seniority)
+from .review import suggest_actions
 from .scoring import priority_order
 
 ANY = "*"            # marker for "this trait doesn't have to match" in a pool key
@@ -180,7 +188,11 @@ def pools_to_try(lead: Lead, settings: dict) -> list[tuple[PoolKey, MatchLevel]]
     # ---- 3 of 3 (industry None here = reps whose expertise is also unknown)
     if language:
         for i, region in enumerate(regions):
-            pools.append(((region, language, industry), MatchLevel.EXACT if i == 0 else MatchLevel.ALTERNATE_REGION))
+            if industry is None:
+                level = MatchLevel.INDUSTRY_UNKNOWN   # only region + language are really known
+            else:
+                level = MatchLevel.EXACT if i == 0 else MatchLevel.ALTERNATE_REGION
+            pools.append(((region, language, industry), level))
 
     # ---- 2 of 3: let one trait differ, in the configured order
     # (an unknown industry may always be relaxed, even in strict mode, as before)
@@ -188,7 +200,8 @@ def pools_to_try(lead: Lead, settings: dict) -> list[tuple[PoolKey, MatchLevel]]
         if trait == "industry" and language and (min_traits <= 2 or industry is None):
             if industry is None and not settings.get("relax_industry_when_unknown", True):
                 continue
-            pools += [((region, language, ANY), MatchLevel.RELAXED_INDUSTRY) for region in regions]
+            level = MatchLevel.INDUSTRY_UNKNOWN if industry is None else MatchLevel.RELAXED_INDUSTRY
+            pools += [((region, language, ANY), level) for region in regions]
         elif trait == "region" and min_traits <= 2 and language and industry:
             pools.append(((ANY, language, industry), MatchLevel.RELAXED_REGION))
         elif trait == "language" and min_traits <= 2 and industry:
@@ -249,11 +262,28 @@ def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
         reason = OverflowReason.NO_SENIOR_AVAILABLE
     else:
         reason = OverflowReason.ALL_AT_CAPACITY
-    return manager_review(lead, reason)
+    return manager_review(lead, reason, settings.get("min_traits_to_match", 3))
+
+
+def matching_settings(min_traits: int | None = None) -> dict:
+    """The routing rules for one run. `min_traits` (1, 2 or 3) overrides
+    routing.min_traits_to_match for this run only: we copy the dict, so the rules cached by
+    load_rules() are never changed."""
+    settings = dict(load_rules()["routing"])
+    if min_traits is not None:
+        if min_traits not in (1, 2, 3):
+            raise ValueError(f"min_traits must be 1, 2 or 3, not {min_traits!r}")
+        settings["min_traits_to_match"] = min_traits
+    return settings
+
+
+def matching_mode(min_traits: int) -> str:
+    """Readable name of a matching minimum, for the dashboard and CLI."""
+    return {3: "Strict (3 of 3)", 2: "Best available (3→2 of 3)"}.get(min_traits, "Best available (3→2→1 of 3)")
 
 
 def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = None,
-              live: bool = False) -> RoutingResult:
+              live: bool = False, min_traits: int | None = None) -> RoutingResult:
     """Route every lead, most urgent first.
 
     `live=True` simulates leads arriving one at a time during the day: they are routed in file
@@ -262,10 +292,11 @@ def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = Non
 
     `strategy` picks the distribution method (see distribution.py); by default it comes from
     rules.yaml (routing.distribution_strategy), which is "fair_share".
+    `min_traits` overrides routing.min_traits_to_match for this run (3 = Strict mode).
     Every lead comes back exactly once: either Assigned or in Manager Review.
     Note: this updates rep.current_capacity on the rep objects you pass in.
     """
-    settings = load_rules()["routing"]
+    settings = matching_settings(min_traits)
     pools = RepPools(reps, strategy or settings.get("distribution_strategy"))
     ordered = sorted(leads, key=(lambda lead: lead.row_number) if live else priority_order)
 
@@ -282,6 +313,8 @@ def route_all(leads: Iterable[Lead], reps: list[Rep], strategy: str | None = Non
     value_fairness = distribution_fairness(reps, pools.value_received)
 
     overflow = [a for a in assignments if a.status is AssignmentStatus.MANAGER_REVIEW]
+    # After everyone is placed: a suggested next step for each Manager Review lead (review.py).
+    suggest_actions(overflow, ordered, reps, settings, lambda priority: seniority_groups(priority, settings))
     return RoutingResult(assignments=assignments, overflow=overflow, reps=reps,
                          fairness_timeline=fairness_timeline, value_fairness=value_fairness)
 
@@ -304,7 +337,7 @@ def assigned(lead: Lead, rep: Rep, pool: PoolKey, match_level: MatchLevel) -> As
                       rep_name=rep.name, rep_seniority=rep.seniority)
 
 
-def manager_review(lead: Lead, reason: OverflowReason) -> Assignment:
+def manager_review(lead: Lead, reason: OverflowReason, min_traits: int = 1) -> Assignment:
     return Assignment(lead_id=lead.id, rep_id=None, priority=lead.priority, score=lead.score,
-                      reason=review_sentence(lead, reason), status=AssignmentStatus.MANAGER_REVIEW,
+                      reason=review_sentence(lead, reason, min_traits), status=AssignmentStatus.MANAGER_REVIEW,
                       overflow_reason=reason)

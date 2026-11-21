@@ -8,7 +8,7 @@ pipeline.py - STEP 4: run everything in order and measure it.
         ▼
     score_all()                          scoring.py
         ▼
-    route_all()                          routing.py
+    route_all()                          routing.py  (+ review.py: suggestions for Manager Review)
         ▼
     compute_metrics()                    KPIs for the dashboard
         ▼
@@ -19,6 +19,7 @@ Bad input raises PipelineError with a plain-English message instead of a Python 
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from collections import Counter
@@ -32,9 +33,10 @@ from .cleaning import (LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED, c
                        clean_reps, missing_columns, standardize_columns)
 from .config import dataset_paths, load_rules
 from .distribution import DEFAULT_STRATEGY, distribution_fairness
-from .models import Assignment, AssignmentStatus, Lead, PipelineResult, Priority, Rep, Seniority
-from .routing import route_all
-from .scoring import score_all
+from .models import (Assignment, AssignmentStatus, DataQualityReport, Lead, PipelineResult, Priority,
+                     Rep, Seniority)
+from .routing import matching_mode, matching_settings, route_all
+from .scoring import matrix_score, score_all
 
 
 class PipelineError(Exception):
@@ -105,7 +107,7 @@ def compute_metrics(leads: list[Lead], reps: list[Rep], assignments: list[Assign
     total_load = sum(rep.current_capacity for rep in reps)
 
     tier_counts = Counter(a.priority for a in assignments)
-    return {
+    metrics = {
         # Volume
         "total_leads": total,
         "assigned": len(assigned),
@@ -141,6 +143,76 @@ def compute_metrics(leads: list[Lead], reps: list[Rep], assignments: list[Assign
         # Speed
         "throughput_lps": round(total / elapsed_seconds) if elapsed_seconds > 0 else 0,
     }
+    metrics.update(evidence_metrics(leads, reps, assignments, tier_counts))
+    return metrics
+
+
+def evidence_metrics(leads: list[Lead], reps: list[Rep], assignments: list[Assignment],
+                     tier_counts: Counter) -> dict[str, Any]:
+    """Numbers that answer a judge's "prove it" questions.
+
+        tier_share / expected_tier_share   our tier mix vs the cheat sheet's reference mix
+        vip_promoted                       VIP leads that are Critical only because of the VIP rule
+        vip_unknown                        leads whose VIP value was blank/unreadable (scored as not VIP)
+        critical_slots / critical_waiting  Senior + Manager capacity vs Critical leads left waiting
+        fingerprint                        short code that changes if ANY decision changes
+    """
+    total = len(assignments)
+    scoring_rules = load_rules()["scoring"]
+    vip_leads = [lead for lead in leads if lead.vip_referral]
+    return {
+        # Tier mix (percent of leads) next to the reference mix from rules.yaml
+        "tier_share": {p.value: percent(tier_counts[p], total) for p in Priority},
+        "expected_tier_share": dict(scoring_rules.get("expected_tier_share", {})),
+        # VIP: how many would NOT be Critical on points alone (the reason Critical is bigger than 10%)
+        "vip_total": len(vip_leads),
+        "vip_promoted": sum(1 for lead in vip_leads
+                            if matrix_score(lead, scoring_rules).priority is not Priority.CRITICAL),
+        "vip_unknown": sum(1 for lead in leads if "vip_unknown" in lead.flags),
+        # Critical capacity: only Seniors and Managers may take Critical leads
+        "critical_slots": sum(rep.max_capacity for rep in reps
+                              if rep.seniority in (Seniority.SENIOR, Seniority.MANAGER)),
+        "critical_waiting": sum(1 for a in assignments if a.priority is Priority.CRITICAL
+                                and a.status is AssignmentStatus.MANAGER_REVIEW),
+        "fingerprint": decision_fingerprint(assignments),
+    }
+
+
+def decision_fingerprint(assignments: list[Assignment]) -> str:
+    """A 12-character code built from every (lead, status, rep, match level), sorted by lead ID.
+    Same input + same rules -> same code, so "Reset, then run again" can be shown to give the
+    identical result. One different decision gives a completely different code."""
+    rows = sorted((a.lead_id, a.status.value, a.rep_id or "", a.match_level.value if a.match_level else "")
+                  for a in assignments)
+    text = "\n".join("|".join(row) for row in rows)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def conservation_check(lead_quality: DataQualityReport, leads: list[Lead],
+                       assignments: list[Assignment]) -> dict[str, Any]:
+    """Proof that no lead was lost or doubled.
+
+    rows_in    rows in the leads file
+    rows_out   routing decisions made (Assigned + Manager Review)
+    every_row_once is True when:
+        - every source row became exactly one lead, except exact re-uploads of the same row
+          (same ID and same content), which are merged and counted in duplicates_removed;
+        - every lead got exactly one decision;
+        - every lead ID is unique after clashing IDs were renamed ("A", "A" -> "A", "A-2").
+    """
+    lead_ids = [lead.id for lead in leads]
+    decided_ids = [a.lead_id for a in assignments]
+    unique_ids = len(set(lead_ids)) == len(lead_ids)
+    every_row_once = (lead_quality.rows_in == len(leads) + lead_quality.duplicates_removed
+                      and unique_ids and len(decided_ids) == len(lead_ids)
+                      and set(decided_ids) == set(lead_ids))
+    return {
+        "rows_in": lead_quality.rows_in,
+        "rows_out": len(assignments),
+        "rows_merged_as_duplicates": lead_quality.duplicates_removed,
+        "ids_renamed": lead_quality.duplicate_ids_renamed,
+        "every_row_once": every_row_once,
+    }
 
 
 # ======================================================================================
@@ -156,11 +228,13 @@ def timed(timings: dict[str, float], stage: str) -> Iterator[None]:
 
 def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: str = "custom",
                         timings: dict[str, float] | None = None, strategy: str | None = None,
-                        live: bool = False) -> PipelineResult:
+                        live: bool = False, min_traits: int | None = None) -> PipelineResult:
     """Run clean -> score -> route -> metrics on DataFrames that are already loaded.
-    `strategy` overrides the distribution method from rules.yaml (see distribution.py)."""
+    `strategy` overrides the distribution method from rules.yaml (see distribution.py).
+    `min_traits` overrides routing.min_traits_to_match for this run only (3 = Strict mode)."""
     timings = dict(timings or {})
     strategy = strategy or load_rules()["routing"].get("distribution_strategy") or DEFAULT_STRATEGY
+    min_traits = matching_settings(min_traits)["min_traits_to_match"]   # also checks it is 1-3
 
     with timed(timings, "clean"):
         leads, lead_quality = clean_leads(leads_df)
@@ -170,12 +244,15 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
         leads = score_all(leads)
 
     with timed(timings, "route"):
-        routed = route_all(leads, reps, strategy, live)
+        routed = route_all(leads, reps, strategy, live, min_traits)
 
     seconds_so_far = sum(timings.values())
     with timed(timings, "metrics"):
         metrics = compute_metrics(leads, routed.reps, routed.assignments, seconds_so_far)
         metrics["strategy"] = strategy
+        metrics["min_traits"] = min_traits
+        metrics["matching_mode"] = matching_mode(min_traits)
+        metrics.update(conservation_check(lead_quality, leads, routed.assignments))
         timeline = routed.fairness_timeline
         metrics["fairness_timeline"] = timeline
         # average fairness while leads were being handed out (not just at the end)
@@ -195,19 +272,22 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
 
 
 def run_pipeline(leads_path: str | Path | Any, reps_path: str | Path | Any,
-                 dataset: str = "custom", strategy: str | None = None, live: bool = False) -> PipelineResult:
+                 dataset: str = "custom", strategy: str | None = None, live: bool = False,
+                 min_traits: int | None = None) -> PipelineResult:
     """Main entry point: read two CSVs and run every stage."""
     timings: dict[str, float] = {}
     with timed(timings, "load"):
         leads_df = read_csv(leads_path, "Leads", LEAD_COLUMNS, LEAD_REQUIRED)
         reps_df = read_csv(reps_path, "Reps", REP_COLUMNS, REP_REQUIRED)
-    return run_pipeline_frames(leads_df, reps_df, dataset, timings, strategy, live)
+    return run_pipeline_frames(leads_df, reps_df, dataset, timings, strategy, live, min_traits)
 
 
-def run_dataset(name: str, strategy: str | None = None, live: bool = False) -> PipelineResult:
+def run_dataset(name: str, strategy: str | None = None, live: bool = False,
+                min_traits: int | None = None) -> PipelineResult:
     """Run one of the bundled datasets from rules.yaml ("sample" or "scale")."""
     leads_path, reps_path = dataset_paths(name)
-    return run_pipeline(leads_path, reps_path, dataset=name, strategy=strategy, live=live)
+    return run_pipeline(leads_path, reps_path, dataset=name, strategy=strategy, live=live,
+                        min_traits=min_traits)
 
 
 # ======================================================================================

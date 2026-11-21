@@ -58,7 +58,7 @@ class OverflowReason(StrEnum):
 
 class MatchLevel(StrEnum):
     """How closely the chosen rep matches the lead on the three traits (region, language, industry)."""
-    EXACT = "Exact"                                         # 3 of 3
+    EXACT = "Exact"                                         # 3 of 3, all three traits KNOWN and equal
     ALTERNATE_REGION = "Alternate region"                   # 3 of 3, using the lead's 2nd (ambiguous) region
     RELAXED_INDUSTRY = "2 of 3: region + language"          # industry differs (or is unknown)
     RELAXED_REGION = "2 of 3: language + industry"          # region differs (or is unknown)
@@ -66,6 +66,10 @@ class MatchLevel(StrEnum):
     ONLY_LANGUAGE = "1 of 3: language"                      # last resort: only the language matches
     ONLY_REGION = "1 of 3: region"
     ONLY_INDUSTRY = "1 of 3: industry"
+    # Missing-data fallback: the lead's industry is unknown, so only region + language can match.
+    # (Either the rep's expertise is also unknown, or the industry was simply left out.)
+    # Kept apart from "Exact" so "Exact" only ever means all 3 known traits match.
+    INDUSTRY_UNKNOWN = "Industry unknown: region + language"
 
     @property
     def traits_matched(self) -> int:
@@ -148,6 +152,10 @@ class Assignment:
     match_level: MatchLevel | None = None
     rep_name: str | None = None
     rep_seniority: Seniority | None = None
+    # Manager Review only (filled in by review.py): what the manager could do next, in plain
+    # English, and the rep that action names (None when no rep can be suggested).
+    suggested_action: str | None = None
+    suggested_rep_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -164,6 +172,9 @@ class DataQualityReport:
     by_field: dict[str, dict[str, int]] = field(default_factory=dict)  # {"region": {"fixed": 12}, ...}
     examples: dict[str, list[str]] = field(default_factory=dict)       # {"region": ['"EUR" -> Europe', ...]}
     warnings: list[str] = field(default_factory=list)
+    # Value audit: every distinct RAW value and what cleaning turned it into (see cleaning.py,
+    # build_value_map). Text fields -> one row per raw spelling; number fields -> one row per format.
+    value_map: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def count(self, field_name: str, kind: str) -> None:
         """Add one to a total ("fixed", "imputed" or "invalid") and to that field's breakdown."""

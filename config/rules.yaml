@@ -103,6 +103,13 @@ scoring:
     High: 60
     Medium: 40
     Low: 0
+  # Reference tier mix (% of leads) from the scoring cheat sheet. NOT a quota: scores decide the
+  # tier on their own. Shown next to our actual mix (metrics["tier_share"]) so a gap can be explained.
+  expected_tier_share:
+    Critical: 10
+    High: 20
+    Medium: 40
+    Low: 30
 
 routing:
   # Default max capacity when a rep's value is missing/unparseable (midpoint of the dictionary's range).

@@ -309,6 +309,7 @@ def clean_leads(df: pd.DataFrame) -> tuple[list[Lead], DataQualityReport]:
             leads.append(lead)
 
     report.rows_out = len(leads)
+    report.value_map = build_value_map(df, LEAD_VALUE_FIELDS, cleaners)
     return leads, report
 
 
@@ -359,6 +360,7 @@ def clean_lead_row(row: dict[str, Any], row_number: int, cleaners: dict[str, Can
     _record(report, "vip_referral", status)
     if status in (MISSING, INVALID):
         imputed.append("vip_referral")
+        flags.append("vip_unknown")   # scored as not-VIP (no change), but a person should confirm
 
     return Lead(
         id=lead_id, company_name=company, region=region.value, language=language.value,
@@ -368,12 +370,26 @@ def clean_lead_row(row: dict[str, Any], row_number: int, cleaners: dict[str, Can
     )
 
 
+def unique_id(original_id: str, taken: Any, times_seen: dict[str, int]) -> str:
+    """Next free "<id>-N" for a clashing ID (N = 2, 3, ...), skipping any ID already in `taken`."""
+    number = times_seen.get(original_id, 1)
+    while True:
+        number += 1
+        candidate = f"{original_id}-{number}"
+        if candidate not in taken:
+            times_seen[original_id] = number
+            return candidate
+
+
 class DuplicateChecker:
     """Decides what to do with repeated leads.
 
         same ID + same content       -> the same lead uploaded twice: keep only the first
         same ID + different content  -> two real leads with a clashing ID: keep both, rename to "-2"
         new ID  + same content       -> maybe a duplicate: keep it, but flag it for the manager
+
+    A rename never reuses an ID that is already taken: with IDs A, A, A-2 the second A becomes
+    A-2, so the real A-2 (if its content differs) becomes A-2-2. Every kept lead has its own ID.
     """
 
     def __init__(self, report: DataQualityReport):
@@ -395,8 +411,7 @@ class DuplicateChecker:
             if self.content_by_id[original_id] == content:
                 self.report.duplicates_removed += 1
                 return False
-            self.times_id_seen[original_id] += 1
-            lead.id = f"{original_id}-{self.times_id_seen[original_id]}"
+            lead.id = unique_id(original_id, self.content_by_id, self.times_id_seen)
             lead.flags.append("duplicate_id_renamed")
             self.report.duplicate_ids_renamed += 1
         else:
@@ -426,6 +441,7 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
     cleaners = build_canonicalizers()
     default_capacity = load_rules()["routing"]["default_max_capacity"]
     times_id_seen: dict[str, int] = {}
+    ids_taken: set[str] = set()
 
     reps = []
     for row_number, row in enumerate(rows_as_dicts(df, REP_COLUMNS), start=1):
@@ -436,13 +452,11 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
         if not rep_id or is_missing_token(normalize_text(rep_id)):
             rep_id = f"R-AUTO-{row_number}"
             report.count("rep_id", "imputed")
-        if rep_id in times_id_seen:
-            times_id_seen[rep_id] += 1
-            rep_id = f"{rep_id}-{times_id_seen[rep_id]}"
+        if rep_id in ids_taken:     # clash: next free "-2", "-3"... (never an ID already used)
+            rep_id = unique_id(rep_id, ids_taken, times_id_seen)
             flags.append("duplicate_id_renamed")
             report.duplicate_ids_renamed += 1
-        else:
-            times_id_seen[rep_id] = 1
+        ids_taken.add(rep_id)
 
         # --- Name ("Ava Lee (R-12)" in the source data: drop the repeated ID)
         name, status = clean_name(row["Name"], rep_id)
@@ -499,4 +513,124 @@ def clean_reps(df: pd.DataFrame) -> tuple[list[Rep], DataQualityReport]:
         ))
 
     report.rows_out = len(reps)
+    report.value_map = build_value_map(df, REP_VALUE_FIELDS, cleaners)
     return reps, report
+
+
+# ======================================================================================
+# Value audit: every distinct raw value and what it became (DataQualityReport.value_map)
+# ======================================================================================
+# report field name -> (CSV column, how to read it). "text:<kind>" uses that Canonicalizer.
+LEAD_VALUE_FIELDS = {
+    "region": ("Region", "text:region"),
+    "language": ("Language", "text:language"),
+    "industry": ("Industry_Vertical", "text:industry"),
+    "recent_activity": ("Recent_Activity", "text:activity"),
+    "vip_referral": ("VIP_Referral", "vip"),
+    "company_size": ("Company_Size", "company_size"),
+}
+REP_VALUE_FIELDS = {
+    "region": ("Region", "text:region"),
+    "language": ("Language", "text:language"),
+    "industry": ("Industry_Vertical_Expertise", "text:industry"),
+    "seniority": ("Seniority_Level", "text:seniority"),
+    "max_capacity": ("Max_Capacity", "max_capacity"),
+}
+
+# Number formats, in the order the dashboard lists them.
+NUMBER_FORMATS = ["plain number", "thousands comma", "k suffix", "range",
+                  "missing token", "invalid", "non-positive"]
+
+
+def number_format(value: Any) -> str:
+    """Which way a number was written: "1000" plain number, "1,000" thousands comma,
+    "5k" k suffix, "500-1000" range, "N/A" missing token, "lots" invalid, "-20" / "0" non-positive."""
+    if is_blank(value) or is_missing_token(normalize_text(value)):
+        return "missing token"
+    number, _ = parse_int(value)
+    if number is None:
+        return "invalid"
+    if number <= 0:
+        return "non-positive"
+    text = str(value).strip().lower()
+    compact = text.replace(",", "").replace("_", "").replace(" ", "")
+    if _NUMBER_RANGE.match(compact):
+        return "range"
+    single = _SINGLE_NUMBER.match(compact)
+    if single and single.group(2):
+        return "k suffix"
+    return "thousands comma" if "," in text else "plain number"
+
+
+def _company_size_becomes(value: Any) -> str:
+    """What a company size value turns into (mirrors parse_company_size + scoring's fallback)."""
+    size, _ = parse_company_size(value)
+    if size is not None:
+        return f"{size:,}"
+    points = load_rules()["scoring"]["company_size"]["missing_points"]
+    return f"unknown (standard +{points} points)"
+
+
+def _max_capacity_becomes(value: Any) -> str:
+    """What a max capacity value turns into (mirrors the capacity rules in clean_reps)."""
+    number, _ = parse_int(value)
+    if number is None:
+        defaults = load_rules()["routing"]["default_max_capacity"]
+        return "seniority default (" + " / ".join(f"{k} {v}" for k, v in defaults.items()) + ")"
+    if number < 0:
+        return f"{abs(number)} (sign typo fixed)"
+    if number == 0:
+        return "0 (never gets leads)"
+    return str(number)
+
+
+def _raw_counts(df: pd.DataFrame, column: str) -> list[tuple[str, int]]:
+    """(raw text, rows) for every distinct raw value, most common first. Blank cells -> ""."""
+    if column not in df.columns:
+        return [("", len(df))] if len(df) else []
+    counts: dict[str, int] = {}
+    for raw, count in df[column].value_counts(dropna=False).items():   # pandas counts, fast
+        key = "" if is_blank(raw) else str(raw)
+        counts[key] = counts.get(key, 0) + int(count)
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def build_value_map(df: pd.DataFrame, fields: dict[str, tuple[str, str]],
+                    cleaners: dict[str, Canonicalizer]) -> dict[str, list[dict[str, Any]]]:
+    """For each field, what cleaning did with every distinct raw value (counted over source rows).
+
+    Text fields: one row per raw spelling
+        {"raw": "ASIA   PACIFICEurope", "cleaned": "Asia-Pacific", "status": "fixed",
+         "count": 12, "alternate": "Europe"}
+    Number fields: one row per way of writing the number, with one example
+        {"format": "k suffix", "count": 40, "example": "5k", "becomes": "5,000"}
+
+    Each distinct value is worked out only once (the Canonicalizers also remember their answers),
+    so the cost depends on the number of different spellings, not the number of rows.
+    """
+    value_map: dict[str, list[dict[str, Any]]] = {}
+    for field_name, (column, kind) in fields.items():
+        counts = _raw_counts(df, column)
+        rows: list[dict[str, Any]] = []
+        if kind.startswith("text:"):
+            cleaner = cleaners[kind.split(":", 1)[1]]
+            for raw, count in counts:
+                result = cleaner.resolve(raw)
+                rows.append({"raw": raw, "cleaned": result.value or "unknown", "status": result.status,
+                             "count": count, "alternate": ", ".join(result.alternates)})
+        elif kind == "vip":
+            for raw, count in counts:
+                vip, status = parse_vip(raw)
+                cleaned = ("Yes" if vip else "No") if status == OK else "unknown"   # unknown = scored as No
+                rows.append({"raw": raw, "cleaned": cleaned, "status": status, "count": count,
+                             "alternate": ""})
+        else:
+            becomes = _company_size_becomes if kind == "company_size" else _max_capacity_becomes
+            by_format: dict[str, dict[str, Any]] = {}
+            for raw, count in counts:   # most common first, so each example is a typical one
+                entry = by_format.setdefault(number_format(raw), {"count": 0, "example": raw,
+                                                                  "becomes": becomes(raw)})
+                entry["count"] += count
+            rows = [{"format": name, **by_format[name]} for name in NUMBER_FORMATS if name in by_format]
+        value_map[field_name] = rows
+    return value_map

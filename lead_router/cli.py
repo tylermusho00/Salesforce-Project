@@ -6,6 +6,8 @@ cli.py - run the pipeline from a terminal.
     leadrouter run --dataset scale --out results.csv
     leadrouter run --leads my_leads.csv --reps my_reps.csv
     leadrouter run --dataset scale --strategy round_robin   # try a different distribution method
+    leadrouter run --strict                                  # only 3-of-3 matches (Strict mode)
+    leadrouter run --min-traits 2                            # allow 3-of-3, then 2-of-3
     leadrouter compare --dataset scale                       # all distribution methods side by side
 
 (`python -m lead_router run ...` does the same thing.)
@@ -33,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--reps", help="Your own reps CSV (use together with --leads).")
     run.add_argument("--out", help="Also save the routed leads to this CSV file.")
     run.add_argument("--strategy", choices=list(STRATEGIES), help="Distribution method (default: rules.yaml).")
+    matching = run.add_mutually_exclusive_group()
+    matching.add_argument("--strict", action="store_const", const=3, dest="min_traits",
+                          help="Strict mode: only reps sharing all 3 traits (same as --min-traits 3).")
+    matching.add_argument("--min-traits", type=int, choices=[1, 2, 3], dest="min_traits",
+                          help="Fewest traits a rep must share with a lead (default: rules.yaml).")
 
     compare = commands.add_parser("compare", help="Run every distribution strategy and compare fairness.")
     compare.add_argument("--dataset", choices=["sample", "scale"], default="scale")
@@ -43,9 +50,18 @@ def print_summary(result: PipelineResult) -> None:
     m, t = result.metrics, result.timings
     rows = [
         ("Leads processed", f"{m['total_leads']:,}"),
+        ("Matching mode", m["matching_mode"]),
+        ("Every row once", f"{m['every_row_once']}  ({m['rows_in']:,} rows in, {m['rows_out']:,} decisions, "
+                           f"{m['rows_merged_as_duplicates']:,} exact duplicates merged)"),
         ("Assigned", f"{m['assigned']:,} ({m['assigned_rate']}%)"),
         ("Manager Review", f"{m['overflow']:,} ({m['overflow_rate']}%)"),
         ("Tiers", ", ".join(f"{tier} {count:,}" for tier, count in m["tiers"].items())),
+        ("Tier mix vs reference", ", ".join(f"{tier} {share}% ({m['expected_tier_share'].get(tier, '-')}%)"
+                                            for tier, share in m["tier_share"].items())),
+        ("VIP leads", f"{m['vip_total']:,} ({m['vip_promoted']:,} Critical only because of VIP); "
+                      f"VIP unknown {m['vip_unknown']:,}"),
+        ("Critical slots", f"{m['critical_slots']:,} Senior + Manager slots; "
+                           f"{m['critical_waiting']:,} Critical leads waiting"),
         ("Critical -> Senior", f"{m['critical_to_senior']:,} of {m['critical_total']:,} ({m['critical_senior_rate']}%)"),
         ("Critical -> Manager", f"{m['critical_to_manager']:,}"),
         ("Critical given to a Junior", f"{m['junior_critical_violations']}  (must be 0)"),
@@ -57,13 +73,25 @@ def print_summary(result: PipelineResult) -> None:
         ("Match quality", ", ".join(f"{k}: {v:,}" for k, v in m["match_levels"].items()) or "-"),
         ("Overflow reasons", ", ".join(f"{k}: {v:,}" for k, v in m["overflow_reasons"].items()) or "-"),
         ("Throughput", f"{m['throughput_lps']:,} leads/second"),
+        ("Fingerprint", m["fingerprint"]),
         ("Time per stage", ", ".join(f"{stage} {secs:.2f}s" for stage, secs in t.items())),
     ]
     width = max(len(label) for label, _ in rows)
     print(f"\nLead Router - {result.dataset}\n" + "-" * 60)
     for label, value in rows:
-        print(f"{label:<{width}}  {value}")
+        print(console_safe(f"{label:<{width}}  {value}"))
     print()
+
+
+def console_safe(text: str) -> str:
+    """Older Windows terminals (cp1252) can't print "→" or "–": swap them for "->" and "-" there."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return text
+    except UnicodeEncodeError:
+        text = text.replace("→", "->").replace("–", "-")
+        return text.encode(encoding, errors="replace").decode(encoding)
 
 
 def compare_strategies(dataset: str) -> None:
@@ -101,9 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.leads or args.reps:
             if not (args.leads and args.reps):
                 raise PipelineError("Pass both --leads and --reps.")
-            result = run_pipeline(args.leads, args.reps, strategy=args.strategy)
+            result = run_pipeline(args.leads, args.reps, strategy=args.strategy, min_traits=args.min_traits)
         else:
-            result = run_dataset(args.dataset, strategy=args.strategy)
+            result = run_dataset(args.dataset, strategy=args.strategy, min_traits=args.min_traits)
     except PipelineError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

@@ -100,6 +100,9 @@ def routing_sentence(lead: Lead, rep: Rep, match_level: MatchLevel) -> str:
     headline = MATCH_HEADLINES[match_level.traits_matched]
     if match_level is MatchLevel.ALTERNATE_REGION:
         headline = "Perfect match, using the second region listed for this lead."
+    elif match_level is MatchLevel.INDUSTRY_UNKNOWN:
+        headline = ("Industry unknown, so only region and language could match"
+                    + (" (this rep has no listed industry either)." if rep.industry is None else "."))
     same, different = _trait_phrases(lead, rep)
     who = _join(same) if same else "was the closest available"
     if different:
@@ -111,9 +114,14 @@ def routing_sentence(lead: Lead, rep: Rep, match_level: MatchLevel) -> str:
     return " ".join(p for p in parts if p)
 
 
-def review_sentence(lead: Lead, reason: OverflowReason) -> str:
-    """Why nobody got this lead, and what the manager should do."""
+def review_sentence(lead: Lead, reason: OverflowReason, min_traits: int = 1) -> str:
+    """Why nobody got this lead, and what the manager should do.
+    `min_traits` is the run's matching minimum: in Strict mode (3) "no match" means nobody shares
+    all 3 traits, not that nobody shares any."""
     traits = " / ".join(v for v in (lead.region, lead.language, lead.industry) if v) or "nothing known"
+    if reason is OverflowReason.NO_MATCH and min_traits > 1:
+        return (f"No rep shares at least {min_traits} of the 3 traits with this lead ({traits}), "
+                "the minimum for this run. A manager needs to pick someone or allow a closer match.")
     if reason is OverflowReason.NO_MATCH:
         return (f"No rep shares even one trait with this lead ({traits}). "
                 "A manager needs to pick someone, or the team needs a rep for this area.")
@@ -203,18 +211,26 @@ def rep_fixes(rep: Rep) -> list[str]:
     return [messages[f] for f in rep.flags if f in messages]
 
 
+VIP_UNKNOWN_TAG = "VIP status unknown – confirm"
+
+
 def lead_tags(lead: Lead, match_level: MatchLevel | None) -> list[str]:
     """Short tags for the lead table's Notes column."""
     tags = []
     if lead.vip_referral:
         tags.append("VIP")
-    if match_level is not None and match_level.traits_matched < 3:
+    vip_unknown = "vip_unknown" in lead.flags
+    if vip_unknown:
+        tags.append(VIP_UNKNOWN_TAG)
+    # (an unknown-industry match is not a "closest match": "Missing industry" below says why)
+    if match_level not in (None, MatchLevel.INDUSTRY_UNKNOWN) and match_level.traits_matched < 3:
         tags.append(f"Closest match ({match_level.traits_matched} of 3)")
     if lead.alt_regions:
         tags.append("Region unclear")
     if any(f.startswith("possible_duplicate_of:") or f == "duplicate_id_renamed" for f in lead.flags):
         tags.append("Possible duplicate")
-    missing = [FIELD_LABELS.get(f, f).lower() for f in lead.imputed_fields if f != "lead_id"]
+    skip = {"lead_id", "vip_referral"} if vip_unknown else {"lead_id"}   # VIP already has its own tag
+    missing = [FIELD_LABELS.get(f, f).lower() for f in lead.imputed_fields if f not in skip]
     if missing:
         tags.append("Missing " + _join(missing))
     return tags

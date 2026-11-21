@@ -52,7 +52,14 @@ def score_lead(lead: Lead, rules: dict[str, Any] | None = None) -> ScoreResult:
         points = int(rules["vip_score"])
         return ScoreResult(points, Priority.CRITICAL, [("VIP referral: automatically Critical", points)],
                            f"VIP referral, so it's automatically Critical ({points} points)")
+    return matrix_score(lead, rules)
 
+
+def matrix_score(lead: Lead, rules: dict[str, Any] | None = None) -> ScoreResult:
+    """The points matrix alone (size + activity + industry), ignoring the VIP override.
+    score_lead uses it for every non-VIP lead; the metrics use it to show how many VIP leads
+    are Critical only BECAUSE of the override."""
+    rules = rules or load_rules()["scoring"]
     reasons = [
         _company_size_points(lead, rules["company_size"]),
         _activity_points(lead, rules["recent_activity"]),
