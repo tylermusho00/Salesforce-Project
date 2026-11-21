@@ -182,10 +182,9 @@ def decision_fingerprint(assignments: list[Assignment]) -> str:
     """A 12-character code built from every (lead, status, rep, match level), sorted by lead ID.
     Same input + same rules -> same code, so "Reset, then run again" can be shown to give the
     identical result. One different decision gives a completely different code."""
-    rows = sorted((a.lead_id, a.status.value, a.rep_id or "", a.match_level.value if a.match_level else "")
+    rows = sorted(f"{a.lead_id}|{a.status.value}|{a.rep_id or ''}|{a.match_level.value if a.match_level else ''}"
                   for a in assignments)
-    text = "\n".join("|".join(row) for row in rows)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()[:12]
 
 
 def conservation_check(lead_quality: DataQualityReport, leads: list[Lead],

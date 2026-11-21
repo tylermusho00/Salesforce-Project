@@ -388,13 +388,15 @@ class DuplicateChecker:
         same ID + different content  -> two real leads with a clashing ID: keep both, rename to "-2"
         new ID  + same content       -> maybe a duplicate: keep it, but flag it for the manager
 
-    A rename never reuses an ID that is already taken: with IDs A, A, A-2 the second A becomes
-    A-2, so the real A-2 (if its content differs) becomes A-2-2. Every kept lead has its own ID.
+    "Same ID" means the ID as written in the file. A rename never reuses an ID that is already
+    taken: with IDs A, A, A-2 the second A becomes A-2, so the real A-2 becomes A-2-2.
+    Every kept lead has its own ID, and only a true re-upload is ever dropped.
     """
 
     def __init__(self, report: DataQualityReport):
         self.report = report
-        self.content_by_id: dict[str, tuple] = {}
+        self.rows_seen: set[tuple[str, tuple]] = set()   # (ID as written in the file, content)
+        self.ids_taken: set[str] = set()                  # IDs of the leads we kept (after renaming)
         self.times_id_seen: dict[str, int] = {}
         self.first_id_with_content: dict[tuple, str] = {}
 
@@ -407,16 +409,16 @@ class DuplicateChecker:
         content = self.content_of(lead)
         original_id = lead.id
 
-        if original_id in self.content_by_id:
-            if self.content_by_id[original_id] == content:
-                self.report.duplicates_removed += 1
-                return False
-            lead.id = unique_id(original_id, self.content_by_id, self.times_id_seen)
+        if (original_id, content) in self.rows_seen:      # exact re-upload of a row we kept
+            self.report.duplicates_removed += 1
+            return False
+        self.rows_seen.add((original_id, content))
+
+        if original_id in self.ids_taken:                 # ID clash with different content
+            lead.id = unique_id(original_id, self.ids_taken, self.times_id_seen)
             lead.flags.append("duplicate_id_renamed")
             self.report.duplicate_ids_renamed += 1
-        else:
-            self.times_id_seen[original_id] = 1
-        self.content_by_id[lead.id] = content
+        self.ids_taken.add(lead.id)
 
         if content in self.first_id_with_content:
             lead.flags.append(f"possible_duplicate_of:{self.first_id_with_content[content]}")
@@ -628,9 +630,10 @@ def build_value_map(df: pd.DataFrame, fields: dict[str, tuple[str, str]],
             becomes = _company_size_becomes if kind == "company_size" else _max_capacity_becomes
             by_format: dict[str, dict[str, Any]] = {}
             for raw, count in counts:   # most common first, so each example is a typical one
-                entry = by_format.setdefault(number_format(raw), {"count": 0, "example": raw,
-                                                                  "becomes": becomes(raw)})
-                entry["count"] += count
+                number_kind = number_format(raw)
+                if number_kind not in by_format:   # first (most common) value of this format = example
+                    by_format[number_kind] = {"count": 0, "example": raw, "becomes": becomes(raw)}
+                by_format[number_kind]["count"] += count
             rows = [{"format": name, **by_format[name]} for name in NUMBER_FORMATS if name in by_format]
         value_map[field_name] = rows
     return value_map

@@ -47,11 +47,13 @@ from .scoring import priority_order
 TRAITS = ("region", "language", "industry")
 
 
-def shared_traits(lead: Lead, rep: Rep) -> tuple[str, ...]:
+def shared_traits(lead: Lead, rep: Rep, use_alt_regions: bool = True) -> tuple[str, ...]:
     """Which of the three traits this rep has in common with the lead (only KNOWN values count).
-    The lead's second region (from a value like "ASIA PACIFICEurope") counts as its region too."""
+    The lead's second region (from a value like "ASIA PACIFICEurope") counts as its region too,
+    unless rules.yaml turns that off (routing.try_alternate_region_when_ambiguous: false)."""
     shared = []
-    if rep.region and lead.region and rep.region in (lead.region, *lead.alt_regions):
+    lead_regions = (lead.region, *lead.alt_regions) if use_alt_regions else (lead.region,)
+    if rep.region and lead.region and rep.region in lead_regions:
         shared.append("region")
     if rep.language and rep.language == lead.language:
         shared.append("language")
@@ -70,14 +72,20 @@ class _Group:
     seniority: Seniority
     sample: Rep                                  # any member: used to compare traits
     reps: list[Rep] = field(default_factory=list)
+    free: int = 0                                # open slots left in the whole group (skip it at 0)
 
 
 class _Capacity:
     """Remaining capacity after routing, minus the slots we have already promised."""
 
-    def __init__(self, reps: list[Rep]):
+    def __init__(self, reps: list[Rep], groups: Iterable[_Group]):
         self.reserved: dict[int, int] = defaultdict(int)     # id(rep) -> slots promised
         self.position = {id(rep): i for i, rep in enumerate(reps)}
+        self.group_of: dict[int, _Group] = {}
+        for group in groups:
+            group.free = sum(rep.available for rep in group.reps)
+            for rep in group.reps:
+                self.group_of[id(rep)] = group
 
     def free(self, rep: Rep) -> int:
         return max(rep.available - self.reserved[id(rep)], 0)
@@ -90,6 +98,7 @@ class _Capacity:
 
     def reserve(self, rep: Rep) -> None:
         self.reserved[id(rep)] += 1
+        self.group_of[id(rep)].free -= 1
 
 
 def suggest_actions(review: list[Assignment], leads: Iterable[Lead], reps: list[Rep],
@@ -104,7 +113,7 @@ def suggest_actions(review: list[Assignment], leads: Iterable[Lead], reps: list[
     lead_by_id = {lead.id: lead for lead in leads}
     min_traits = settings.get("min_traits_to_match", 3)
     relax_unknown_industry = settings.get("relax_industry_when_unknown", True)
-    capacity = _Capacity(reps)
+    use_alt_regions = settings.get("try_alternate_region_when_ambiguous", True)
 
     # Group reps by traits + seniority (file order kept inside each group).
     groups: dict[tuple, _Group] = {}
@@ -113,6 +122,7 @@ def suggest_actions(review: list[Assignment], leads: Iterable[Lead], reps: list[
         if key not in groups:
             groups[key] = _Group(rep.seniority, rep)
         groups[key].reps.append(rep)
+    capacity = _Capacity(reps, groups.values())
 
     # For each distinct set of lead traits: every group, best trait overlap first.
     ranked_cache: dict[tuple, list[tuple[tuple[str, ...], _Group]]] = {}
@@ -120,7 +130,7 @@ def suggest_actions(review: list[Assignment], leads: Iterable[Lead], reps: list[
     def ranked(lead: Lead) -> list[tuple[tuple[str, ...], _Group]]:
         key = (lead.region, lead.alt_regions, lead.language, lead.industry)
         if key not in ranked_cache:
-            pairs = [(shared_traits(lead, g.sample), g) for g in groups.values()]
+            pairs = [(shared_traits(lead, g.sample, use_alt_regions), g) for g in groups.values()]
             ranked_cache[key] = sorted(pairs, key=lambda pair: -len(pair[0]))   # stable: file order
         return ranked_cache[key]
 
@@ -152,7 +162,7 @@ def _suggest(lead: Lead, ranked: list[tuple[tuple[str, ...], _Group]], seniority
     for shared, group in ranked:
         if not shared or (best and len(shared) < len(best[1])):
             break                                  # sorted by overlap: nothing better follows
-        if group.seniority not in rank_of:
+        if group.seniority not in rank_of or not group.free:
             continue
         for rep in group.reps:
             if capacity.free(rep):
@@ -186,8 +196,8 @@ def _suggest(lead: Lead, ranked: list[tuple[tuple[str, ...], _Group]], seniority
         return text + hint, None
 
     # 4. Critical lead: the only free match is a Junior (or only Juniors match at all).
-    junior_has_room = any(shared and group.seniority is Seniority.JUNIOR
-                          and any(capacity.free(rep) for rep in group.reps) for shared, group in ranked)
+    junior_has_room = any(shared and group.seniority is Seniority.JUNIOR and group.free
+                          for shared, group in ranked)
     allowed_match = any(shared and group.seniority in rank_of for shared, group in ranked)
     if is_critical and (junior_has_room or not allowed_match):
         closest = _closest(ranked, capacity, set(rank_of))
@@ -235,7 +245,7 @@ def _roomiest(ranked, capacity: _Capacity, allowed: set[Seniority]) -> Rep | Non
     """Among allowed reps, the one with the most free slots (ties: file order), or None."""
     best = None
     for _, group in ranked:
-        if group.seniority not in allowed:
+        if group.seniority not in allowed or not group.free:
             continue
         for rep in group.reps:
             free = capacity.free(rep)

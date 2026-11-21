@@ -170,6 +170,18 @@ def test_every_source_row_exactly_once_with_id_collisions():
     assert sorted(a.lead_id for a in r.assignments) == ["A", "A-2", "A-2-2"]
 
 
+def test_same_content_under_its_own_id_is_kept_not_merged():
+    # (A-2, Y) has the same content as the renamed second A, but its own ID in the file:
+    # it is a possible duplicate (kept, flagged), not a re-upload.
+    leads_, report = clean_leads(lead_rows("A,X,NA,EN,Tech,1,,False",
+                                           "A,Y,NA,EN,Tech,1,,False",
+                                           "A-2,Y,NA,EN,Tech,1,,False",
+                                           "A,Y,NA,EN,Tech,1,,False"))   # true re-upload of row 2
+    assert [lead.id for lead in leads_] == ["A", "A-2", "A-2-2"]
+    assert report.duplicates_removed == 1 and report.possible_duplicates == 1
+    assert "possible_duplicate_of:A-2" in leads_[2].flags
+
+
 # ---------------------------------------------------------------- proof metrics
 def test_tier_share_and_critical_capacity():
     r = run_pipeline_frames(lead_rows("L-1,A,NA,EN,Tech,10,,True", "L-2,B,NA,EN,Retail,10,,False"),

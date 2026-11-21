@@ -43,6 +43,21 @@ def test_reassign_picks_the_rep_sharing_the_most_traits():
     assert a.suggested_rep_id == "two"
 
 
+def test_alternate_region_only_counts_when_rules_allow_it(monkeypatch):
+    import copy
+
+    import lead_router.routing as routing
+    from lead_router.config import load_rules
+
+    rules = copy.deepcopy(load_rules())
+    rules["routing"]["try_alternate_region_when_ambiguous"] = False
+    monkeypatch.setattr(routing, "load_rules", lambda: rules)
+    lead = make_lead(region="Europe", alt_regions=("North America",))
+    a = route_all([lead], [make_rep("S", SR)], min_traits=3).assignments[0]   # rep is in North America
+    assert a.status is AssignmentStatus.MANAGER_REVIEW
+    assert "shares language + industry" in a.suggested_action and "policy exception" in a.suggested_action
+
+
 def test_partly_missing_lead_gets_a_fill_in_hint():
     a = route_all([make_lead(region=None)], [make_rep("S", SR, language="German")], min_traits=3).assignments[0]
     assert a.suggested_rep_id == "S"                                     # shares the industry
