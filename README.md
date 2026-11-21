@@ -198,6 +198,7 @@ Then run `pytest -q`.
 
 | File | What it proves |
 |---|---|
+| `test_business_scenarios.py` | **10 plain-language promises** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md) |
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
 | `test_routing.py` | Junior never gets Critical, Senior before Manager, capacity never exceeded, even split, overflow reasons, nothing dropped |
