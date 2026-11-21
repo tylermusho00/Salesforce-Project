@@ -61,10 +61,16 @@ def normalize_text(value: Any) -> str:
 
     "  Asia.  Pacific " -> "asia pacific"      "N/A" -> "n a"      None -> ""
     """
+    if isinstance(value, str):
+        return _normalize_str(value)    # the common case: remembered per distinct spelling
     if is_blank(value):
         return ""
-    text = str(value).lower()
-    text = re.sub(r"[^0-9a-z]+", " ", text)  # anything that isn't a letter/digit becomes a space
+    return _normalize_str(str(value))
+
+
+@lru_cache(maxsize=65536)
+def _normalize_str(value: str) -> str:
+    text = re.sub(r"[^0-9a-z]+", " ", value.lower())  # anything that isn't a letter/digit becomes a space
     return text.strip()
 
 
@@ -191,8 +197,13 @@ def parse_int(value: Any) -> tuple[int | None, str]:
         return None, INVALID
     if isinstance(value, (int, float)):
         return int(value), OK
+    return _parse_int_text(value if isinstance(value, str) else str(value))
 
-    text = str(value).strip().lower()
+
+@lru_cache(maxsize=65536)
+def _parse_int_text(value: str) -> tuple[int | None, str]:
+    """parse_int for text. Pure, so each distinct spelling ("1,000", "5k", ...) is read once."""
+    text = value.strip().lower()
     if is_missing_token(normalize_text(text)):
         return None, MISSING
 
@@ -271,11 +282,21 @@ def missing_columns(df: pd.DataFrame, required: list[str]) -> list[str]:
 
 def rows_as_dicts(df: pd.DataFrame, columns: list[str]) -> list[dict[str, Any]]:
     """Every row as {column: value}. Optional columns that are absent come back as None."""
-    df = df.copy()
+    names = list(df.columns)
+    if len(set(names)) != len(names):                 # odd file with repeated headers: slow, safe path
+        df = df.copy()
+        for col in columns:
+            if col not in df.columns:
+                df[col] = None
+        return df.to_dict("records")
+    # Faster than DataFrame.to_dict: pull each column out once as a plain Python list, then zip.
+    # Same keys (file columns in order, then any missing optional column as None) and same values.
+    values = [df[name].tolist() for name in names]
     for col in columns:
         if col not in df.columns:
-            df[col] = None
-    return df.to_dict("records")
+            names.append(col)
+            values.append([None] * len(df))
+    return [dict(zip(names, row)) for row in zip(*values)]
 
 
 def _record(report: DataQualityReport, field_name: str, status: str,
