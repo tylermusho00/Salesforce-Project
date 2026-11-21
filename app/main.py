@@ -759,8 +759,11 @@ def _test_card(s: scenarios.Scenario) -> html.Div:
         badge = html.Span("✓ Passed", className="test-badge pass")
     else:
         badge = html.Span("✗ Failed", className="test-badge fail")
-    blurb = lambda label, text: html.Div(className="test-blurb", children=[
-        html.P(label, className="test-blurb-label"), html.P(text, className="test-blurb-text")])
+    def blurb(label, text):
+        """A labelled one-liner, or a short bullet list when given several lines."""
+        body = (html.Ul([html.Li(line) for line in text], className="test-blurb-list") if isinstance(text, list)
+                else html.P(text, className="test-blurb-text"))
+        return html.Div(className="test-blurb", children=[html.P(label, className="test-blurb-label"), body])
     return html.Div(className="test-card", children=[
         html.Div(className="test-card-head", children=[
             html.Div([html.P(f"Test {s.number}", className="test-eyebrow"), html.H3(s.title, className="test-title")]),

@@ -33,9 +33,9 @@ REP_HEADER = "Rep_ID,Name,Region,Language,Industry_Vertical_Expertise,Seniority_
 class Scenario:
     number: int
     title: str                 # small label, e.g. "No lead is ever lost"
-    why: str                   # why this test exists
-    result: str                # what actually happened, with numbers
-    meaning: str               # why that shows the program works
+    why: str                   # why this test exists (one short line)
+    result: list[str]          # what actually happened: 2-3 short bullet points with numbers
+    meaning: str               # why that shows the program works (one short line)
     passed: bool
     chart: dict[str, Any] = field(default_factory=dict)   # data for the dashboard graphic
     numbers: dict[str, Any] = field(default_factory=dict)  # raw numbers for pytest
@@ -62,8 +62,8 @@ def full_run() -> tuple[PipelineResult, float] | None:
 
 
 def _skipped(number: int, title: str, why: str) -> Scenario:
-    return Scenario(number, title, why, "Skipped: the 50,000-lead challenge file isn't in the data folder.",
-                    "Add data/leads_scale.csv and data/reps_scale.csv to run this check.", True, skipped=True)
+    return Scenario(number, title, why, ["Skipped: the 50,000-lead file isn't in the data folder"],
+                    "Add data/leads_scale.csv and data/reps_scale.csv to run it.", True, skipped=True)
 
 
 # ======================================================================================
@@ -71,7 +71,7 @@ def _skipped(number: int, title: str, why: str) -> Scenario:
 # ======================================================================================
 def no_lead_lost(full) -> Scenario:
     title = "No lead is ever lost"
-    why = "A lost lead is a customer nobody ever calls. The brief says overflow must wait for a manager, never vanish."
+    why = "A lost lead is a customer nobody ever calls."
     if full is None:
         return _skipped(1, title, why)
     result, _ = full
@@ -84,8 +84,8 @@ def no_lead_lost(full) -> Scenario:
               and len(ids) == len(set(ids)) == len(result.leads))
     return Scenario(
         1, title, why,
-        f"{quality.rows_in:,} leads in → {assigned:,} assigned + {review:,} in Manager Review. Lost: {lost}.",
-        "Every lead comes out exactly once, with a rep or waiting for a manager. A missing or doubled lead would fail this.",
+        [f"{quality.rows_in:,} leads in", f"{assigned:,} assigned · {review:,} waiting for a manager", f"{lost} lost"],
+        "Every lead comes out exactly once.",
         passed,
         chart={"type": "bars", "labels": ["Assigned to a rep", "Manager Review", "Lost"],
                "values": [assigned, review, lost], "colors": ["green", "orange", "red"], "unit": "leads"},
@@ -99,7 +99,7 @@ def no_lead_lost(full) -> Scenario:
 # ======================================================================================
 def urgent_never_to_juniors(full) -> Scenario:
     title = "Urgent leads never go to beginners"
-    why = "The cheat sheet's hard rule: Critical leads go to a Senior first, then a Manager, and never to a Junior."
+    why = "Cheat-sheet rule: urgent leads go to Seniors, never Juniors."
     # Tiny case: the only matching rep is a Junior.
     tiny = _run("L-1,Big Bank,Europe,German,Finance,5000,Requested Live Demo,False\n",
                 "R-1,Jamie,Europe,German,Finance,Junior,0,45\n")
@@ -120,10 +120,9 @@ def urgent_never_to_juniors(full) -> Scenario:
                     "review": who["Manager Review"], "junior": who["Junior"], "senior_share": senior_share})
     return Scenario(
         2, title, why,
-        f"{len(critical):,} Critical leads → {who['Senior']:,} Seniors, {who['Manager']:,} Managers, "
-        f"{who['Junior']} Juniors. When only a Junior matched, the lead waited for a manager.",
-        f"Zero Juniors across every urgent lead ({100 * senior_share:.1f}% handled by Seniors), even when "
-        "breaking the rule would have been the easy option.",
+        [f"{who['Senior']:,} → Seniors · {who['Manager']:,} → Managers", f"{who['Junior']} → Juniors",
+         "Only a Junior free? The lead waits for a manager"],
+        f"The rule held for all {len(critical):,} urgent leads.",
         who["Junior"] == 0 and senior_share > 0.95 and tiny_ok,
         chart={"type": "bars", "labels": ["Senior reps", "Managers", "Manager Review", "Junior reps"],
                "values": [who["Senior"], who["Manager"], who["Manager Review"], who["Junior"]],
@@ -137,7 +136,7 @@ def urgent_never_to_juniors(full) -> Scenario:
 # ======================================================================================
 def nobody_overloaded(full) -> Scenario:
     title = "Nobody gets overloaded"
-    why = "Every rep has a maximum. Going past it leaves leads sitting untouched on a desk that's already full."
+    why = "An overloaded rep leaves leads untouched."
     rows = "".join(f"L-{i},Shop {i},North America,English,Retail,50,Attended Webinar,False\n" for i in range(10))
     tiny = _run(rows, "R-1,Sam,North America,English,Retail,Senior,0,3\n")
     tiny_assigned = sum(1 for a in tiny.assignments if a.rep_id)
@@ -155,9 +154,9 @@ def nobody_overloaded(full) -> Scenario:
     numbers.update({"reps": len(result.reps), "over": len(over), "full_reps": full_reps})
     return Scenario(
         3, title, why,
-        f"{len(result.reps):,} reps checked: {len(over)} over their limit ({full_reps:,} filled exactly to it). "
-        f"10 leads for 3 open slots: {tiny_assigned} assigned, {len(tiny.manager_review)} to Manager Review.",
-        "Reps are filled right up to their limit but never past it; leads that don't fit go to a manager instead of piling on.",
+        [f"{len(result.reps):,} reps: {len(over)} over their limit",
+         f"10 leads, 3 slots → {tiny_assigned} assigned, {len(tiny.manager_review)} to a manager"],
+        "Reps fill up to their limit, never past it.",
         not over and tiny_ok,
         chart={"type": "bars", "labels": ["Within their limit", "Over their limit"],
                "values": [within, len(over)], "colors": ["green", "red"], "unit": "reps"},
@@ -177,10 +176,10 @@ def vip_jumps_the_line() -> Scenario:
     first = result.assignments[0].lead_id
     return Scenario(
         4, "VIP referrals always jump the line",
-        "The cheat sheet says a VIP referral is Critical no matter what. A key partner's referral shouldn't wait because the company is small.",
-        f"Same 5-person shop, no activity: with VIP → {vip.priority.value} ({vip.score} pts); "
-        f"without VIP → {plain.priority.value} ({plain.score} pts). The VIP lead was routed first.",
-        "The VIP flag is the only difference between the two leads, and it alone moves the lead from the bottom tier to the top.",
+        "Cheat-sheet rule: a VIP referral is always Critical.",
+        [f"Tiny shop + VIP → {vip.priority.value} ({vip.score} pts)",
+         f"Same shop, no VIP → {plain.priority.value} ({plain.score} pts)"],
+        "The VIP flag alone moves a lead to the top.",
         vip.priority is Priority.CRITICAL and vip.score == 100 and plain.priority is Priority.LOW and first == "L-VIP",
         chart={"type": "bars", "labels": ["With VIP flag", "Same lead, no VIP"], "values": [vip.score, plain.score],
                "colors": ["red", "grey"], "unit": "points", "max": 100},
@@ -199,14 +198,16 @@ def messy_spellings() -> Scenario:
                   "R-2,Right Rep,North America,English,Technology,Senior,0,20\n")
     lead, decision = result.leads[0], result.assignments[0]
     read_as = (lead.region, lead.language, lead.industry, lead.company_size, lead.recent_activity)
-    passed = (read_as == ("North America", "English", "Technology", 5000, "Requested Live Demo")
+    expected = ("North America", "English", "Technology", 5000, "Requested Live Demo")
+    correct = sum(got == want for got, want in zip(read_as, expected))
+    passed = (read_as == expected
               and decision.rep_name == "Right Rep" and decision.match_level is MatchLevel.EXACT)
     return Scenario(
         5, "Messy spellings still reach the right rep",
-        "The challenge data is full of typos and shorthand. If only perfect spelling worked, most leads would never match.",
-        f"\"Nort America / EN / Tech / 5k\" was read as {lead.region} / {lead.language} / {lead.industry} / "
-        f"{(lead.company_size or 0):,} employees, scored {lead.score} pts ({lead.priority.value}) and sent to {decision.rep_name}.",
-        "Every messy value was understood, the score is right, and the lead reached the rep in the right region, not just any rep.",
+        "Real data is full of typos and shorthand.",
+        [f"{correct} of 5 messy values read correctly",
+         f"Sent to {decision.rep_name}" + (" (perfect match)" if decision.match_level is MatchLevel.EXACT else "")],
+        "Typos don't stop a lead reaching the right rep.",
         passed,
         chart={"type": "pairs", "rows": [
             (raw[0], lead.region or "?"), (raw[1], lead.language or "?"), (raw[2], lead.industry or "?"),
@@ -226,10 +227,10 @@ def fair_share() -> Scenario:
     names = ["Ana", "Ben", "Cal"]
     return Scenario(
         6, "Equal reps get an equal share",
-        "The brief says not to give every lead to the first matching rep. Unfair splits burn one rep out while others sit idle.",
-        f"30 leads, 3 identical reps → ours: {' / '.join(str(ours[n]) for n in names)}; "
-        f"first-on-the-list: {' / '.join(str(naive[n]) for n in names)}.",
-        "Our split is perfectly even; the comparison shows exactly the problem we avoid.",
+        "Leads shouldn't all go to the first rep on the list.",
+        [f"Ours: {' / '.join(str(ours[n]) for n in names)}",
+         f"First on the list: {' / '.join(str(naive[n]) for n in names)}"],
+        "Equal reps get equal work.",
         sorted(ours.values()) == [10, 10, 10] and max(naive.values()) == 30,
         chart={"type": "grouped", "labels": names,
                "series": [("Lead Router", [ours[n] for n in names], "blue"),
@@ -243,15 +244,14 @@ def fair_share() -> Scenario:
 # ======================================================================================
 def fast_upload(full, target_seconds: float = 10.0) -> Scenario:
     title = "Big uploads don't freeze it"
-    why = "The brief's scale challenge: a sudden upload of 50,000 leads must be handled quickly, without freezing."
+    why = "50,000 leads can arrive at once."
     if full is None:
         return _skipped(7, title, why)
     result, seconds = full
     return Scenario(
         7, title, why,
-        f"{len(result.leads):,} leads cleaned, scored and routed in {seconds:.1f} seconds "
-        f"({len(result.leads) / seconds:,.0f} per second). Target: under {target_seconds:.0f}.",
-        "A manager has results in a few seconds, well inside our target, so a big upload never stalls the team.",
+        [f"{len(result.leads):,} leads in {seconds:.1f} s", f"Target: under {target_seconds:.0f} s"],
+        "A big upload never stalls the team.",
         len(result.leads) == 50_000 and seconds < target_seconds,
         chart={"type": "bars", "labels": ["Lead Router", "Our target"], "values": [round(seconds, 1), target_seconds],
                "colors": ["green", "grey"], "unit": "seconds"},
@@ -272,10 +272,10 @@ def missing_information() -> Scenario:
               and junk is not None and junk.status is AssignmentStatus.MANAGER_REVIEW)
     return Scenario(
         8, "Missing information doesn't break it",
-        "Real files have blanks, \"N/A\" and junk. One bad row must never crash the program or knock a lead out.",
-        f"Lead with blanks → assigned to {partial.rep_name if partial else '?'}. "
-        f"Lead with only junk → {junk.status.value if junk else '?'}: \"{junk.reason if junk else ''}\"",
-        "Nothing crashed, neither lead was dropped, partial info was enough to route, and the hopeless case reached a manager with a clear reason.",
+        "Real files have blanks, \"N/A\" and junk.",
+        [f"Lead with blanks → assigned to {partial.rep_name if partial else '?'}",
+         "Lead with only junk → waits for a manager", "0 crashes · 0 leads dropped"],
+        "Bad data never breaks the program.",
         passed,
         chart={"type": "outcomes", "rows": [
             ("Lead with blanks", f"Assigned to {partial.rep_name}" if partial and partial.rep_name else "Not assigned",

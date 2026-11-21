@@ -18,7 +18,7 @@ from lead_router.models import AssignmentStatus, MatchLevel, Priority
 
 def report(scenario: scenarios.Scenario) -> None:
     """Print the scenario's result for the test log."""
-    print(f"\n    RESULT: {scenario.result}")
+    print(f"\n    RESULT: {'; '.join(scenario.result)}")
 
 
 @pytest.fixture(scope="module")

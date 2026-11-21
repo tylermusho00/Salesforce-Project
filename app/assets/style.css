@@ -219,3 +219,4 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 .pair-after { background: #EBF7E6; border: 1px solid #91DB8B; border-radius: 6px; padding: 4px 8px; font-weight: 600; }
 .pair-after.bad { background: #FEF1EE; border-color: #F4B8A8; }
 .pair-before.label { font-family: inherit; background: #F3F3F3; border-color: #C9C9C9; }
+.test-blurb-list { font-size: 14px; line-height: 1.45; color: var(--text); margin: 0; padding-left: 18px; }
