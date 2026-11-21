@@ -38,6 +38,7 @@ from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_R
 from lead_router.config import dataset_paths
 from lead_router.explain import FIELD_LABELS, lead_fixes
 from lead_router.export import reps_frame, results_frame, salesforce_frame
+from lead_router import scenarios
 from lead_router.models import MatchLevel, OverflowReason
 from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, run_dataset, \
     run_pipeline_frames
@@ -153,6 +154,8 @@ def page_header() -> html.Div:
                 dbc.DropdownMenuItem("Manager Review queue (CSV)", id="exp-review"),
                 dbc.DropdownMenuItem("Rep capacity (CSV)", id="exp-reps"),
             ]),
+            html.Button("✓ Run Tests", id="btn-tests", className="slds-btn tests-btn",
+                        title="Run the business scenario checks and see the results"),
             dcc.Download(id="download"),
         ]),
     ])
@@ -325,6 +328,21 @@ def details() -> html.Div:
         ]))
 
 
+def tests_modal() -> dbc.Modal:
+    """The 'Run Tests' panel: runs the business scenario checks (lead_router/scenarios.py, the same
+    code pytest runs) and shows one card per check."""
+    return dbc.Modal(id="tests-modal", size="xl", scrollable=True, is_open=False, children=[
+        dbc.ModalHeader(dbc.ModalTitle("Is Lead Router working correctly?")),
+        dbc.ModalBody(dcc.Loading(type="circle", color="#0176D3", children=html.Div(
+            id="tests-body", className="tests-body"))),
+        dbc.ModalFooter([
+            html.Span("These are the same checks our automated pytest suite runs on every change.", className="hint me-auto"),
+            html.Button("↻ Run again", id="tests-again", className="slds-btn"),
+            html.Button("Close", id="tests-close", className="slds-btn brand"),
+        ]),
+    ])
+
+
 def layout() -> html.Div:
     return html.Div([
         global_header(),
@@ -341,6 +359,8 @@ def layout() -> html.Div:
         dcc.Store(id="up-leads-store"),
         dcc.Store(id="up-reps-store"),
         dcc.Store(id="scroll-done"),  # dummy output for the search-scroll callback
+        dcc.Store(id="tests-trigger"),  # bumps when the tests should (re)run
+        tests_modal(),
     ])
 
 
@@ -698,6 +718,85 @@ def _match_table(lead, decision):
         html.Tbody([html.Tr([html.Td(t), html.Td(a), html.Td(b), html.Td(mark(t, ok) if t in ("Region", "Language", "Industry") else "")])
                     for t, a, b, ok in checks]),
     ])
+
+
+# ======================================================================================
+# Callbacks: "Run Tests" panel
+# ======================================================================================
+@callback(Output("tests-modal", "is_open"), Output("tests-trigger", "data"),
+          Input("btn-tests", "n_clicks"), Input("tests-again", "n_clicks"), Input("tests-close", "n_clicks"),
+          State("tests-trigger", "data"), prevent_initial_call=True)
+def toggle_tests(_open, _again, _close, trigger):
+    """Open (and start the checks), run again, or close the panel."""
+    if ctx.triggered_id == "tests-close":
+        return False, no_update
+    return True, (trigger or 0) + 1
+
+
+@callback(Output("tests-body", "children"), Input("tests-trigger", "data"), prevent_initial_call=True)
+def run_tests(_trigger):
+    """Run every business scenario check and draw one card per check."""
+    results, seconds = scenarios.run_all()
+    passed = sum(1 for s in results if s.passed and not s.skipped)
+    ran = sum(1 for s in results if not s.skipped)
+    all_ok = passed == ran
+    summary = html.Div(className="tests-summary " + ("ok" if all_ok else "bad"), children=[
+        html.Div("✓" if all_ok else "✗", className="tests-summary-mark"),
+        html.Div([
+            html.P(f"{passed} of {ran} checks passed", className="tests-summary-title"),
+            html.P(f"Each check runs the whole program (clean → score → assign) on the real 50,000-lead file "
+                   f"or a small made-up case. Took {seconds:.1f} seconds.", className="tests-summary-sub"),
+        ]),
+    ])
+    cards = [dbc.Col(_test_card(s), xs=12, lg=6, className="mb-3") for s in results]
+    return [summary, dbc.Row(cards, className="mt-3")]
+
+
+def _test_card(s: scenarios.Scenario) -> html.Div:
+    if s.skipped:
+        badge = html.Span("Skipped", className="test-badge skip")
+    elif s.passed:
+        badge = html.Span("✓ Passed", className="test-badge pass")
+    else:
+        badge = html.Span("✗ Failed", className="test-badge fail")
+    blurb = lambda label, text: html.Div(className="test-blurb", children=[
+        html.P(label, className="test-blurb-label"), html.P(text, className="test-blurb-text")])
+    return html.Div(className="test-card", children=[
+        html.Div(className="test-card-head", children=[
+            html.Div([html.P(f"Test {s.number}", className="test-eyebrow"), html.H3(s.title, className="test-title")]),
+            badge,
+        ]),
+        html.Div(_test_graphic(s), className="test-graphic"),
+        blurb("Why this test", s.why),
+        blurb("Result", s.result),
+        blurb("Why it shows it works", s.meaning),
+    ])
+
+
+def _test_graphic(s: scenarios.Scenario):
+    """A small picture of the result: bars, a before → after list, or outcome chips."""
+    chart = s.chart
+    kind = chart.get("type")
+    config = {"displayModeBar": False, "staticPlot": True}
+    if kind == "bars":
+        fig = charts.test_bars(chart["labels"], chart["values"], chart["colors"], chart.get("unit", ""), chart.get("max"))
+        return dcc.Graph(figure=fig, config=config)
+    if kind == "grouped":
+        return dcc.Graph(figure=charts.test_grouped(chart["labels"], chart["series"], chart.get("unit", "")), config=config)
+    if kind == "pairs":
+        return html.Div(className="pairs", children=[
+            html.Div(className="pair", children=[html.Span(f"“{before}”", className="pair-before"),
+                                                 html.Span("→", className="pair-arrow"),
+                                                 html.Span(after, className="pair-after")])
+            for before, after in chart["rows"]])
+    if kind == "outcomes":
+        return html.Div(className="pairs", children=[
+            html.Div(className="pair", children=[html.Span(label, className="pair-before label"),
+                                                 html.Span("→", className="pair-arrow"),
+                                                 html.Span(("✓ " if ok else "✗ ") + outcome,
+                                                           className="pair-after " + ("ok" if ok else "bad"))])
+            for label, outcome, ok in chart["rows"]])
+    return html.P("Add the 50,000-lead file to see this chart.", className="hint")
 
 
 # ======================================================================================

@@ -206,3 +206,40 @@ def rep_fullness(reps: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(showgrid=False, tickfont={"size": 12, "color": "#181818"})
     fig.update_layout(margin={"l": 8, "r": 12, "t": 12, "b": 8})
     return fig
+
+
+# ======================================================================================
+# Test results panel ("Run Tests" button): one small chart per scenario
+# ======================================================================================
+TEST_COLORS = {"green": "#2E844A", "orange": "#F2A33A", "red": "#BA0517", "blue": "#0176D3", "grey": "#A0A0A0"}
+
+
+def test_bars(labels: list[str], values: list[float], colors: list[str], unit: str, maximum: float | None = None) -> go.Figure:
+    """Small horizontal bars with the number written at the end of each bar."""
+    fig = _base(60 + 46 * len(labels))
+    top = maximum or max(max(values), 1)
+    fig.add_bar(y=labels[::-1], x=values[::-1], orientation="h", width=0.62,
+                marker_color=[TEST_COLORS.get(c, c) for c in colors][::-1],
+                text=[f"{v:,}" + (f" {unit}" if unit else "") for v in values][::-1],
+                textposition="outside", cliponaxis=False, textfont={"size": 13, "color": "#181818"},
+                hovertemplate="%{y}: %{x:,}<extra></extra>")
+    fig.update_xaxes(visible=False, range=[0, top * 1.55])
+    fig.update_yaxes(showgrid=False, tickfont={"size": 13, "color": "#181818"})
+    fig.update_layout(margin={"l": 8, "r": 8, "t": 6, "b": 6})
+    return fig
+
+
+def test_grouped(labels: list[str], series: list[tuple[str, list[float], str]], unit: str) -> go.Figure:
+    """Side-by-side columns comparing two ways of doing the same thing."""
+    fig = _base(210)
+    top = max(max(values) for _, values, _ in series) or 1
+    for name, values, color in series:
+        fig.add_bar(x=labels, y=values, name=name, marker_color=TEST_COLORS.get(color, color),
+                    text=[f"{v:,}" for v in values], textposition="outside", cliponaxis=False,
+                    textfont={"size": 13, "color": "#181818"},
+                    hovertemplate=f"{name}: " + "%{y:,} " + unit + "<extra>%{x}</extra>")
+    fig.update_layout(barmode="group", bargap=0.35, margin={"l": 8, "r": 8, "t": 6, "b": 6})
+    fig.update_yaxes(visible=False, range=[0, top * 1.3])
+    fig.update_xaxes(showgrid=False, tickfont={"size": 13, "color": "#181818"})
+    _legend_below(fig, y=-0.12)
+    return fig
