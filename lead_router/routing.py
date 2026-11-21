@@ -68,7 +68,7 @@ from collections import Counter, defaultdict
 from typing import Iterable
 
 from .config import load_rules
-from .distribution import distribution_fairness, get_strategy
+from .distribution import DEFAULT_STRATEGY, distribution_fairness, get_strategy
 from .explain import review_sentence, routing_sentence
 from .models import (Assignment, AssignmentStatus, Lead, MatchLevel, OverflowReason, Priority,
                      Rep, RoutingResult, Seniority)
@@ -81,6 +81,7 @@ ANY_INDUSTRY = ANY   # (old name, kept for readability in a few places)
 # A pool key: (region, language, industry). Any position may be ANY; industry may also be None
 # (None = rep's expertise is unknown: they get leads whose industry is also unknown).
 PoolKey = tuple[str, str, str | None]
+_EMPTY: dict = {}   # shared empty result for lookups (never modified)
 
 
 def pools_for_rep(rep: Rep) -> list[PoolKey]:
@@ -108,9 +109,12 @@ class RepPools:
 
     def __init__(self, reps: list[Rep], strategy: str | None = None):
         # how to choose between equally qualified reps (see distribution.py)
+        self.strategy = strategy or DEFAULT_STRATEGY
         self.sort_key = get_strategy(strategy)
-        # pool key -> reps in that pool who still have free capacity
-        self.open_reps: dict[PoolKey, list[Rep]] = defaultdict(list)
+        # pool key -> seniority -> {rep id: rep} for reps who still have free capacity.
+        # Splitting by seniority means a lookup never scans reps of the wrong seniority, and a
+        # dict lets a full rep leave a pool in O(1) by id (no list.remove + dataclass equality).
+        self.open_reps: dict[PoolKey, dict[Seniority, dict[str, Rep]]] = {}
         # pool key -> how many reps of each seniority are in it at all (never changes).
         # Used only to explain WHY a lead overflowed.
         self.headcount: dict[PoolKey, Counter] = defaultdict(Counter)
@@ -123,6 +127,10 @@ class RepPools:
         # rep id -> total score of the leads they hold (for value fairness)
         self.value_received: dict[str, float] = {}
         self.clock = 0  # goes up by one with every assignment
+        # Rules are fixed for a run, so these answers are worked out once and reused:
+        # (region, alt regions, language, industry) -> pools to try;  priority -> seniority groups.
+        self.pools_cache: dict[tuple, list[tuple[PoolKey, MatchLevel]]] = {}
+        self.groups_cache: dict[Priority, list[list[Seniority]]] = {}
 
         for position, rep in enumerate(reps):
             self.file_position[rep.id] = position
@@ -132,7 +140,8 @@ class RepPools:
             for pool in self.pools_of[rep.id]:
                 self.headcount[pool][rep.seniority] += 1
                 if not rep.is_full:          # a rep with max capacity 0 never enters a pool
-                    self.open_reps[pool].append(rep)
+                    by_seniority = self.open_reps.setdefault(pool, {})
+                    by_seniority.setdefault(rep.seniority, {})[rep.id] = rep
 
     def fairness_key(self, rep: Rep) -> tuple:
         """Smaller = should get the next lead. The strategy decides what "fair" means."""
@@ -140,11 +149,28 @@ class RepPools:
                              self.file_position[rep.id])
 
     def pick_rep(self, pool: PoolKey, allowed: list[Seniority]) -> Rep | None:
-        """The fairest free rep in this pool with one of the allowed seniorities, or None."""
-        candidates = [rep for rep in self.open_reps.get(pool, []) if rep.seniority in allowed]
-        if not candidates:
+        """The fairest free rep in this pool with one of the allowed seniorities, or None.
+
+        Every key ends with the rep's unique file position, so there is exactly one smallest
+        key: the result does not depend on the order reps are scanned in."""
+        by_seniority = self.open_reps.get(pool)
+        if not by_seniority:
             return None
-        return min(candidates, key=self.fairness_key)
+        best = None
+        if self.strategy == "fair_share":
+            # Same tuple as distribution.STRATEGIES["fair_share"], built inline with no calls.
+            value_received, last_served, position = self.value_received, self.last_served, self.file_position
+            best_key = None
+            for seniority in allowed:
+                for rep_id, rep in by_seniority.get(seniority, _EMPTY).items():
+                    max_capacity = rep.max_capacity
+                    key = ((rep.current_capacity + 1) / max_capacity, value_received[rep_id] / max_capacity,
+                           last_served[rep_id], position[rep_id])
+                    if best_key is None or key < best_key:
+                        best, best_key = rep, key
+            return best
+        candidates = [rep for seniority in allowed for rep in by_seniority.get(seniority, _EMPTY).values()]
+        return min(candidates, key=self.fairness_key) if candidates else None
 
     def assign(self, rep: Rep, lead_score: int = 0) -> None:
         """Record one more lead for this rep and take them out of the pools when full."""
@@ -154,7 +180,7 @@ class RepPools:
         self.last_served[rep.id] = self.clock
         if rep.is_full:
             for pool in self.pools_of[rep.id]:
-                self.open_reps[pool].remove(rep)
+                del self.open_reps[pool][rep.seniority][rep.id]
 
     def anyone_in(self, pools: list[PoolKey], seniorities: Iterable[Seniority]) -> bool:
         """Does at least one rep (full or not) with these seniorities exist in these pools?"""
@@ -239,10 +265,15 @@ def seniority_groups(priority: Priority, settings: dict) -> list[list[Seniority]
 # ======================================================================================
 def route_lead(lead: Lead, pools: RepPools, settings: dict) -> Assignment:
     """Find a rep for one lead, or send it to Manager Review with a reason."""
-    candidate_pools = pools_to_try(lead, settings)
+    traits = (lead.region, lead.alt_regions, lead.language, lead.industry)
+    candidate_pools = pools.pools_cache.get(traits)
+    if candidate_pools is None:
+        candidate_pools = pools.pools_cache[traits] = pools_to_try(lead, settings)
     if not candidate_pools:
         return manager_review(lead, OverflowReason.MISSING_ROUTING_DATA)
-    groups = seniority_groups(lead.priority, settings)
+    groups = pools.groups_cache.get(lead.priority)
+    if groups is None:
+        groups = pools.groups_cache[lead.priority] = seniority_groups(lead.priority, settings)
 
     # Best match first; within a match, preferred seniority first.
     for pool, match_level in candidate_pools:
