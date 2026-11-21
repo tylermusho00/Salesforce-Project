@@ -8,10 +8,10 @@ Layout, top to bottom (mirrors a Lightning dashboard page):
     app nav bar     Lead Router app with tabs; "Dashboards" is active
     page header     title, description, "As of ...", Run Sample / Run Scale / Reset, upload, export
     canvas          white components on a blue-gray background:
-                      row 1  Leads by Priority Tier | Lead Routing Funnel | Leads Assigned + Manager Review
-                      row 2  Leads by Region | Where Leads Went | Manager Review by Reason
+                      row 1  Leads by Priority | From Upload to Rep | Leads Assigned + Manager Review
+                      row 2  Leads by Region | Who Got the Leads | Assigned vs. Manager Review
                       row 3  four big numbers: Critical→Senior, speed, utilization, values auto-fixed
-                      row 4  Capacity Used by Seniority | Team Capacity
+                      row 4  How Busy Each Team Is | How Full Are Our Reps?
     details         Lightning tabs: Lead Queue, Manager Review, Rep Capacity, Data Quality
 
 How Dash works, in one paragraph: `layout()` builds the page once. Each `@callback` is a
@@ -173,28 +173,28 @@ def canvas() -> html.Div:
     col = lambda child, lg, md=12: dbc.Col(child, xs=12, md=md, lg=lg)
     return html.Div(id="canvas", style={"display": "none"}, children=dbc.Row(className="canvas-grid", children=[
         # Row 1
-        col(component("Leads by Priority Tier", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
-        col(component("Lead Routing Funnel", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
+        col(component("Leads by Priority", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
+        col(component("From Upload to Rep", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
         col(html.Div(className="metric-stack", children=[
             metric("assigned", "Leads Assigned to Reps", "queue", "Prioritized Lead Queue", small=True),
             metric("review", "Waiting in Manager Review", "review", "Manager Review", small=True),
         ]), 3, 6),
         # Row 2
         col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
-        col(component("Where Leads Went (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
-        col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 4),
+        col(component("Who Got the Leads (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
+        col(component("Assigned vs. Manager Review", chart("ch-split"), "review", "Manager Review", "split"), 4),
         # Row 3: five big numbers, equal widths (nested row so they share one line)
         dbc.Col(xs=12, children=dbc.Row(className="canvas-grid", children=[
             dbc.Col(metric("critical", "Critical Leads to Seniors", "queue", "Prioritized Lead Queue"),
                     xs=12, md=6, lg=True),
-            dbc.Col(metric("fairness", "Distribution Fairness", "capacity", "Rep Capacity"), xs=12, md=6, lg=True),
+            dbc.Col(metric("matches", "Perfect Matches", "queue", "Prioritized Lead Queue"), xs=12, md=6, lg=True),
             dbc.Col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), xs=12, md=4, lg=True),
             dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=4, lg=True),
             dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=4, lg=True),
         ])),
         # Row 4
-        col(component("Capacity Used by Seniority", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
-        col(component("Team Capacity: Reps by % Full", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
+        col(component("How Busy Each Team Is", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
+        col(component("How Full Are Our Reps?", chart("ch-fullness", 300), "capacity", "Rep Capacity", "util-h"), 6),
     ]))
 
 
@@ -413,8 +413,8 @@ def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps):
 # ======================================================================================
 # Callback: redraw the whole dashboard after a run or reset
 # ======================================================================================
-METRIC_KEYS = ["assigned", "review", "critical", "fairness", "speed", "util", "fixed"]
-CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-reasons", "ch-capacity", "ch-util"]
+METRIC_KEYS = ["assigned", "review", "critical", "matches", "speed", "util", "fixed"]
+CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-split", "ch-capacity", "ch-fullness"]
 
 
 @callback(
@@ -447,8 +447,7 @@ def render(_store):
 
     # --- big numbers: (value, caption)
     metrics = {
-        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · traits matched 3/3: {by_traits[3]:,} · "
-                                           f"2/3: {by_traits[2]:,} · 1/3: {by_traits[1]:,}"),
+        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% of {m['total_leads']:,} leads"),
         "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
         "critical": (f"{m['critical_senior_rate']}%",
                      html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
@@ -458,35 +457,28 @@ def render(_store):
         "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} slots · "
                                          f"{m['capacity_violations']} over capacity"),
         "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had a gap · 0 dropped"),
-        "fairness": (f"{m['fairness_during_run']:.3f}", "Jain index · 1.000 = perfectly even"),
+        # Share of assigned leads whose rep matches region, language AND industry
+        "matches": (f"{100 * by_traits[3] / max(m['assigned'], 1):.1f}%",
+                    f"rep has the same region, language & industry"),
     }
 
     # --- charts
-    reasons = m["overflow_reasons"]
     stages = [
-        ("Rows uploaded", lq.rows_in),
-        ("Unique leads", m["total_leads"]),
-        ("Routable", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)),
-        ("A trait matched", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
-                              - reasons.get(OverflowReason.NO_MATCH.value, 0)),
-        ("Assigned to a rep", m["assigned"]),
+        ("Leads uploaded", lq.rows_in),
+        ("Kept after cleanup", m["total_leads"]),
+        ("Given to a rep", m["assigned"]),
     ]
     region_counts = results["region"].value_counts().reindex(REGIONS, fill_value=0)
     region_counts = region_counts[region_counts > 0]
-    if m["overflow"]:
-        reason_fig = charts.donut(list(reasons), list(reasons.values()), f"{m['overflow']:,}", "Reason",
-                                  [charts.ORANGE, charts.PEACH, charts.TEAL, charts.LIGHT_TEAL])
-    else:
-        reason_fig = charts.donut(["No overflow"], [1], "0", "Reason", [charts.LIGHT_GREY])
-        reason_fig.update_traces(textinfo="none", hoverinfo="skip")
     figures = [
         charts.tier_bar(m["tiers"]),
         charts.routing_funnel(stages),
-        charts.donut(list(region_counts.index), list(region_counts.values), f"{m['total_leads']:,}", "Region"),
+        charts.donut(list(region_counts.index), list(region_counts.values),
+                     f"<b>{m['total_leads']:,}</b><br><span style='font-size:12px'>leads</span>"),
         charts.destination_columns(results),
-        reason_fig,
+        charts.assigned_vs_review(m["assigned"], m["overflow"]),
         charts.capacity_by_seniority(reps),
-        charts.utilization_histogram(reps),
+        charts.rep_fullness(reps),
     ]
 
     review_columns = ["lead_id", "company_name", "priority", "score", "overflow_reason", "region", "language",
@@ -669,7 +661,8 @@ def lead_detail(queue_selection, review_selection):
         html.Div("Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39 · a VIP referral is always Critical",
                  className="hint mb-3"),
         html.H6("Why this rep?" if decision.rep_id else "Why is it waiting for a manager?"),
-        html.P(decision.reason, className="plain-explanation mb-3"),
+        html.P(decision.reason, className="plain-explanation mb-2"),
+        _match_table(lead, decision),
         html.H6("What we cleaned up in this lead's data"),
         fix_table,
         html.Details(className="hint", children=[
@@ -680,6 +673,31 @@ def lead_detail(queue_selection, review_selection):
         ]),
     ]
     return True, body, f"{lead.id} · {lead.company_name}"
+
+
+def _match_table(lead, decision):
+    """Lead vs. assigned rep, trait by trait, with a check or cross: the evidence behind the choice."""
+    rep = next((r for r in STATE.result.reps if r.id == decision.rep_id), None) if decision.rep_id else None
+    if rep is None:
+        return html.Div(className="mb-3")
+    lead_regions = [r for r in (lead.region, *lead.alt_regions) if r]
+    checks = [
+        ("Region", lead.region or "Unknown", rep.region or "-", bool(rep.region and rep.region in lead_regions)),
+        ("Language", lead.language or "Unknown", rep.language or "-", bool(rep.language and rep.language == lead.language)),
+        ("Industry", lead.industry or "Unknown", rep.industry or "None listed",
+         bool(rep.industry) and rep.industry == lead.industry),
+        ("Seniority", f"{lead.priority.value} lead", rep.seniority.value, True),
+        ("Workload", "", f"{rep.current_capacity} of {rep.max_capacity} leads", True),
+    ]
+    def mark(trait, ok):
+        if trait == "Industry" and lead.industry is None:
+            return html.Span("–", title="The lead's industry isn't known")
+        return html.Span("✓", className="match-yes") if ok else html.Span("✗", className="match-no")
+    return html.Table(className="detail-table match-table mb-3 w-100", children=[
+        html.Thead(html.Tr([html.Th(""), html.Th("Lead"), html.Th(rep.name), html.Th("")])),
+        html.Tbody([html.Tr([html.Td(t), html.Td(a), html.Td(b), html.Td(mark(t, ok) if t in ("Region", "Language", "Industry") else "")])
+                    for t, a, b, ok in checks]),
+    ])
 
 
 # ======================================================================================

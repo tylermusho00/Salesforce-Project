@@ -54,10 +54,10 @@ the run buttons, and white report components on the blue-gray dashboard canvas.
 
 | Row | Components | The question it answers |
 |---|---|---|
-| 1 | Leads by Priority Tier · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review | How many leads, how urgent, and how many found an owner? |
-| 2 | Leads by Region · Where Leads Went (by Priority) · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
-| 3 | Critical → Senior % · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The four numbers to say out loud in a demo |
-| 4 | Capacity Used by Seniority · Reps by % Full | Is the team balanced? Are Managers held in reserve? |
+| 1 | Leads by Priority · From Upload to Rep · Leads Assigned / Waiting in Manager Review | How many leads, how urgent, and how many found an owner? |
+| 2 | Leads by Region · Who Got the Leads (by Priority) · Assigned vs. Manager Review | Where is the work, and who got it? |
+| 3 | Critical → Senior % · Perfect Matches · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
+| 4 | How Busy Each Team Is · How Full Are Our Reps? | Is the team balanced? Are Managers held in reserve? |
 | Details | Lead Queue · Manager Review · Rep Capacity · Data Quality tabs | Drill down: search, filter, group, click a lead for its score breakdown |
 
 Every "View Report" link and the nav bar jump to the matching detail tab; the header search box

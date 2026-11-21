@@ -39,91 +39,68 @@ def _raw(value: Any) -> str:
     return f'"{value}"'
 
 
-def _first_name(rep: Rep) -> str:
-    return rep.name.split()[0] if rep.name else rep.id
-
-
 # ======================================================================================
 # Routing
 # ======================================================================================
-MATCH_HEADLINES = {
-    3: "Perfect match: same region, language and industry.",
-    2: "Close match (2 of 3 traits): no rep matching all 3 was free.",
-    1: "Partial match (1 of 3 traits): no closer rep was free.",
-}
-
-
-def _trait_phrases(lead: Lead, rep: Rep) -> tuple[list[str], list[str]]:
-    """Split the rep's traits into ones that match the lead and ones that don't."""
+def _trait_differences(lead: Lead, rep: Rep) -> tuple[list[str], list[str]]:
+    """(traits that match, short notes for traits that don't), e.g. (['region', 'language'],
+    ['different industry (rep: Retail, lead: Finance)'])."""
     same, different = [], []
     lead_regions = [r for r in (lead.region, *lead.alt_regions) if r]
-
-    if rep.region and rep.region in lead_regions:
-        same.append(f"covers {rep.region}")
-    else:
-        different.append(f"covers {rep.region or 'no listed region'}"
-                         + (f" rather than {lead.region}" if lead.region else " (the lead's region is unknown)"))
-
-    if rep.language and rep.language == lead.language:
-        same.append(f"speaks {rep.language}")
-    else:
-        different.append(f"speaks {rep.language or 'no listed language'}"
-                         + (f" rather than {lead.language}" if lead.language else " (the lead's language is unknown)"))
-
-    if lead.industry is None and rep.industry is None:
-        same.append("handles leads with no listed industry")
-    elif rep.industry and rep.industry == lead.industry:
-        same.append(f"specializes in {rep.industry}")
-    elif lead.industry is None:
-        different.append(f"specializes in {rep.industry} (the lead's industry is unknown)")
-    elif rep.industry is None:
-        different.append(f"has no listed industry specialty (the lead is in {lead.industry})")
-    else:
-        different.append(f"specializes in {rep.industry} rather than {lead.industry}")
+    pairs = (
+        ("region", rep.region in lead_regions if rep.region else False, rep.region, lead.region),
+        ("language", bool(rep.language) and rep.language == lead.language, rep.language, lead.language),
+        ("industry", bool(rep.industry) and rep.industry == lead.industry, rep.industry, lead.industry),
+    )
+    for trait, matches, rep_value, lead_value in pairs:
+        if matches:
+            same.append(trait)
+        elif rep_value is None and lead_value is None:
+            continue  # unknown on both sides: neither a match nor a difference worth listing
+        else:
+            different.append(f"different {trait} (rep: {rep_value or 'none listed'}, lead: {lead_value or 'unknown'})")
     return same, different
 
 
 def _seniority_note(lead: Lead, rep: Rep) -> str:
+    if rep.seniority is not Seniority.MANAGER:
+        return ""
     if lead.priority is Priority.CRITICAL:
-        if rep.seniority is Seniority.SENIOR:
-            return "Urgent (Critical) leads go to Senior reps first."
-        return "Urgent (Critical) lead: every matching Senior rep was full, so a Manager took it."
-    if rep.seniority is Seniority.MANAGER:
-        return "Matching Junior and Senior reps were full, so a Manager took it."
-    return ""
+        return " Seniors were full, so a Manager took this urgent lead."
+    return " Juniors and Seniors were full, so a Manager took it."
 
 
 def routing_sentence(lead: Lead, rep: Rep, match_level: MatchLevel) -> str:
-    """e.g. 'Close match (2 of 3 traits): no rep matching all 3 was free. Sent to Lucas Ali,
-    a Senior rep who covers Europe and speaks German, but specializes in Retail rather than Finance.
-    Lucas now has 5 of 22 leads.'"""
-    headline = MATCH_HEADLINES[match_level.traits_matched]
-    if match_level is MatchLevel.ALTERNATE_REGION:
-        headline = "Perfect match, using the second region listed for this lead."
-    same, different = _trait_phrases(lead, rep)
-    who = _join(same) if same else "was the closest available"
-    if different:
-        who += ", but " + _join(different)
-    parts = [headline,
-             f"Sent to {rep.name}, a {rep.seniority.value} rep who {who}.",
-             _seniority_note(lead, rep),
-             f"{_first_name(rep)} now has {rep.current_capacity} of {rep.max_capacity} leads."]
-    return " ".join(p for p in parts if p)
+    """One short line, e.g.
+         'Perfect match: same region, language and industry.'
+         'Close match (2 of 3): same region and language; different industry (rep: Retail, lead: Finance).'
+         'Best available (1 of 3): only the language matches.'
+       Who the rep is and how busy they are is shown next to it, so it isn't repeated here."""
+    traits = match_level.traits_matched
+    if traits == 3 and lead.industry is None:
+        line = "Best match: same region and language (the lead's industry isn't known)."
+    elif traits == 3:
+        line = ("Perfect match (using the lead's second listed region)." if match_level is MatchLevel.ALTERNATE_REGION
+                else "Perfect match: same region, language and industry.")
+    elif traits == 2:
+        same, different = _trait_differences(lead, rep)
+        line = f"Close match (2 of 3): same {_join(same)}; " + "; ".join(different) + "."
+    else:
+        same, _ = _trait_differences(lead, rep)
+        line = (f"Best available (1 of 3): only the {same[0]} matches." if same
+                else "Best available (1 of 3): closest rep with room.")
+    return line + _seniority_note(lead, rep)
 
 
 def review_sentence(lead: Lead, reason: OverflowReason) -> str:
-    """Why nobody got this lead, and what the manager should do."""
-    traits = " / ".join(v for v in (lead.region, lead.language, lead.industry) if v) or "nothing known"
-    if reason is OverflowReason.NO_MATCH:
-        return (f"No rep shares even one trait with this lead ({traits}). "
-                "A manager needs to pick someone, or the team needs a rep for this area.")
+    """Why nobody got this lead, in one line, ending with what the manager should do."""
     if reason is OverflowReason.ALL_AT_CAPACITY:
-        return (f"Reps who could take this lead ({traits}) are all full. "
-                "A manager needs to assign it or free up capacity.")
+        return "Every rep who could take it is full. A manager needs to assign it."
     if reason is OverflowReason.NO_SENIOR_AVAILABLE:
-        return ("This is an urgent (Critical) lead, and urgent leads never go to Junior reps. "
-                "The only reps who match are Juniors, so a manager needs to step in.")
-    return "We don't know this lead's region, language or industry, so there was nothing to match on."
+        return "Urgent lead, but only Junior reps match (Juniors can't take urgent leads). Needs a manager."
+    if reason is OverflowReason.NO_MATCH:
+        return "No rep covers this region, language or industry. Needs a manager."
+    return "Region, language and industry are all unknown, so there's nothing to match on."
 
 
 # ======================================================================================
