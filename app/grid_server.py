@@ -72,6 +72,6 @@ def rows_for_request(df: pd.DataFrame, request: dict) -> dict:
         df = df.sort_values([s["colId"] for s in sort], ascending=[s["sort"] == "asc" for s in sort],
                             kind="stable")
     start, end = request.get("startRow", 0), request.get("endRow", 50)
-    page = df.iloc[start:end].drop(columns=["_search"], errors="ignore").astype(object)
+    page = df.iloc[start:end].drop(columns=["_search", "_flag"], errors="ignore").astype(object)
     page = page.where(page.notna(), None)  # NaN -> null for JSON
     return {"rowData": page.to_dict("records"), "rowCount": len(df)}

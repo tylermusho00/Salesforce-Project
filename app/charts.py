@@ -2,7 +2,7 @@
 charts.py - every Plotly figure on the dashboard, styled like Salesforce Lightning report charts.
 
 Each function takes plain data (counts, DataFrames) and returns a figure. No Dash code here,
-so you can try any chart in a notebook:  charts.tier_bar({"Critical": 10, ...}).show()
+so you can try any chart in a notebook:  charts.donut(["A", "B"], [3, 4], "7", "Group").show()
 """
 from __future__ import annotations
 
@@ -65,19 +65,45 @@ def empty(height: int = 270) -> go.Figure:
 # ======================================================================================
 # Row 1
 # ======================================================================================
-def tier_bar(tier_counts: dict[str, int]) -> go.Figure:
-    """Horizontal bar: how many leads landed in each priority tier (like 'Sales by Quarter')."""
+def tier_vs_reference(tier_counts: dict[str, int], tier_share: dict[str, float],
+                      reference: dict[str, float]) -> go.Figure:
+    """Horizontal bars: % of leads in each tier, with the cheat sheet's reference mix drawn as a
+    grey tick on each bar. The reference is what a typical file looks like, not a target."""
     fig = _base()
     tiers = TIERS[::-1]  # Critical on top
-    counts = [tier_counts.get(t, 0) for t in tiers]
-    fig.add_bar(y=tiers, x=counts, orientation="h", marker_color=BLUE, width=0.75,
-                text=[f"{c:,}" for c in counts], textposition="inside", insidetextanchor="end",
-                textfont={"color": "white", "size": 12},
-                hovertemplate="%{y}: %{x:,} leads<extra></extra>")
-    fig.update_xaxes(side="top", tickformat="~s",
-                     title={"text": "Record Count", "font": {"size": 11, "color": "#3E3E3C"}, "standoff": 4})
-    fig.update_yaxes(title={"text": "Priority Tier", "font": {"size": 11, "color": AXIS_TEXT}}, showgrid=False)
-    fig.update_layout(margin={"l": 8, "r": 12, "t": 52, "b": 8})
+    shares = [tier_share.get(t, 0.0) for t in tiers]
+    refs = [reference.get(t) for t in tiers]
+    fig.add_bar(y=tiers, x=shares, orientation="h", marker_color=[TIER_COLORS[t] for t in tiers], width=0.7,
+                name="This file", text=[f"{tier_counts.get(t, 0):,} · {s:.1f}%" for t, s in zip(tiers, shares)],
+                textposition="outside", cliponaxis=False, textfont={"size": 12, "color": "#3E3E3C"},
+                hovertemplate="%{y}: %{x:.1f}% of leads<extra></extra>")
+    if any(r is not None for r in refs):
+        fig.add_scatter(y=tiers, x=refs, mode="markers", name="Reference mix (cheat sheet)",
+                        marker={"symbol": "line-ns", "size": 26, "line": {"width": 3, "color": GREY}},
+                        hovertemplate="%{y}: reference %{x}%<extra></extra>")
+    top = max(shares + [r or 0 for r in refs] + [1])
+    fig.update_xaxes(side="top", ticksuffix="%", range=[0, top * 1.35],
+                     title={"text": "% of leads", "font": {"size": 11, "color": "#3E3E3C"}, "standoff": 4})
+    fig.update_yaxes(showgrid=False)
+    fig.update_layout(margin={"l": 8, "r": 12, "t": 52, "b": 8}, bargap=0.3)
+    _legend_below(fig)
+    return fig
+
+
+def stage_timings(timings: dict[str, float], stages: list[str]) -> go.Figure:
+    """One horizontal stacked bar: seconds spent in each pipeline stage, measured on this run."""
+    fig = _base(120)
+    colors = [PURPLE, BLUE, TEAL, ORANGE, LIGHT_BLUE]
+    for stage, color in zip(stages, colors):
+        seconds = timings.get(stage, 0.0)
+        fig.add_bar(y=["run"], x=[seconds], orientation="h", name=stage, marker_color=color,
+                    text=[f"{stage} {seconds:.2f} s"], textposition="inside", insidetextanchor="middle",
+                    textfont={"color": "white", "size": 11}, constraintext="both",
+                    hovertemplate=f"{stage}: %{{x:.3f}} s<extra></extra>")
+    fig.update_layout(barmode="stack", margin={"l": 8, "r": 8, "t": 8, "b": 8})
+    fig.update_xaxes(ticksuffix=" s", showgrid=True)
+    fig.update_yaxes(visible=False)
+    _legend_below(fig, y=-0.35)
     return fig
 
 
