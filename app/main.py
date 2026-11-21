@@ -6,12 +6,14 @@ Run (from the repository root):   python -m app.main   ->   http://127.0.0.1:805
 Layout, top to bottom (mirrors a Lightning dashboard page):
     global header   logo, search (jumps to the lead queue), icons
     app nav bar     Lead Router app with tabs; "Dashboards" is active
-    page header     title, description, "As of ...", Run Sample / Run Scale / Reset, upload, export
+    page header     title, "As of ...", Run Sample / Run Scale / Reset, matching mode, Trace a messy lead,
+                    upload, export
     canvas          white components on a blue-gray background:
-                      row 1  Leads by Priority Tier | Lead Routing Funnel | Leads Assigned + Manager Review
+                      row 1  Tiers vs Reference | Lead Routing Funnel | Assigned + Manager Review + Critical Waiting
                       row 2  Leads by Region | Where Leads Went | Manager Review by Reason
-                      row 3  four big numbers: Critical→Senior, speed, utilization, values auto-fixed
-                      row 4  Capacity Used by Seniority | Team Capacity
+                      row 3  five big numbers: Critical→Senior, fairness, speed, utilization, values auto-fixed
+                      row 4  Rules Check: the rules proven on this run + time per stage
+                      row 5  Capacity Used by Seniority | Team Capacity
     details         Lightning tabs: Lead Queue, Manager Review, Rep Capacity, Data Quality
 
 How Dash works, in one paragraph: `layout()` builds the page once. Each `@callback` is a
@@ -24,6 +26,7 @@ from __future__ import annotations
 import base64
 import io
 import threading
+import time
 from datetime import datetime
 from typing import Any
 
@@ -36,20 +39,30 @@ from app import charts
 from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
 from lead_router.config import dataset_paths
-from lead_router.explain import FIELD_LABELS, lead_fixes
+from lead_router.explain import FIELD_LABELS, VIP_UNKNOWN_TAG, lead_fixes
 from lead_router.export import reps_frame, results_frame, salesforce_frame
-from lead_router.models import MatchLevel, OverflowReason
+from lead_router.models import Assignment, Lead, MatchLevel, OverflowReason, PipelineResult, Priority
 from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, run_dataset, \
     run_pipeline_frames
 
 TIERS = charts.TIERS
 REGIONS = ["North America", "Europe", "Asia-Pacific", "Unknown"]
+# the measured pipeline stages shown in the Rules Check bar ("metrics" = working out the KPIs;
+# shown too, so the stages add up to the total and the slowest one is named honestly)
+TIMED_STAGES = ["load", "clean", "score", "route", "metrics"]
+MODE_BEST, MODE_STRICT = 1, 3                        # min_traits for the two matching modes
+VIP_UNKNOWN = "VIP unknown"                          # lead queue filter option (Status select)
 
 # ======================================================================================
 # Result tables, built once per run and cached (keyed by STATE.run_id)
 # ======================================================================================
-_CACHE: dict[str, Any] = {"run_id": None, "results": None, "reps": None}
+_CACHE: dict[str, Any] = {"run_id": None, "results": None, "reps": None, "by_id": None, "trace": None}
 _CACHE_LOCK = threading.Lock()  # several callbacks fire at once after a run; build the tables only once
+
+# Fingerprint of the last run per (dataset, matching mode). Kept through Reset on purpose: it is
+# what lets the Rules Check say "same fingerprint as before Reset" (same input -> same decisions).
+_FINGERPRINTS: dict[tuple[str, int], str] = {}
+_PREVIOUS_FINGERPRINT: dict[int, str | None] = {}   # run_id -> fingerprint of the run before it
 
 
 def frames() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -59,8 +72,63 @@ def frames() -> tuple[pd.DataFrame, pd.DataFrame]:
             results = results_frame(STATE.result)
             results["_search"] = (results["lead_id"] + " " + results["company_name"] + " " +
                                   results["rep_name"].fillna("") + " " + results["rep_id"].fillna("")).str.lower()
-            _CACHE.update(run_id=STATE.run_id, results=results, reps=reps_frame(STATE.result))
+            # hidden column behind the "VIP unknown" option of the lead queue's Status filter
+            results["_flag"] = results["notes"].str.contains(VIP_UNKNOWN_TAG, regex=False).map(
+                {True: VIP_UNKNOWN, False: ""})
+            _CACHE.update(run_id=STATE.run_id, results=results, reps=reps_frame(STATE.result),
+                          by_id=None, trace=None)
         return _CACHE["results"], _CACHE["reps"]
+
+
+def find_lead(lead_id: str) -> tuple[Lead | None, Assignment | None]:
+    """The cleaned lead and its routing decision, looked up by ID (index built once per run)."""
+    result = STATE.result
+    if result is None:
+        return None, None
+    with _CACHE_LOCK:
+        index = _CACHE["by_id"]
+        if index is None or index[0] != STATE.run_id:
+            decisions = {a.lead_id: a for a in result.assignments}
+            index = (STATE.run_id, {lead.id: (lead, decisions.get(lead.id)) for lead in result.leads})
+            _CACHE["by_id"] = index
+    return index[1].get(lead_id, (None, None))
+
+
+def pick_trace_lead(result: PipelineResult | None) -> str | None:
+    """The lead "Trace a messy lead" opens, chosen the same way every time:
+    the Critical lead with the most data fixes (ties: lowest lead ID), else any lead with fixes,
+    else the top of the queue. None when there is no run."""
+    if result is None or not result.assignments:
+        return None
+    fix_counts = {lead.id: len(lead_fixes(lead)) for lead in result.leads}
+    messy = [lead for lead in result.leads if fix_counts[lead.id]]
+    pool = [lead for lead in messy if lead.priority is Priority.CRITICAL] or messy
+    if pool:
+        return min(pool, key=lambda lead: (-fix_counts[lead.id], lead.id)).id
+    return result.assignments[0].lead_id
+
+
+def remember_fingerprint(run_id: int, result: PipelineResult) -> None:
+    """Note this run's fingerprint and keep the one from the previous run of the same dataset and
+    matching mode, so the Rules Check can compare them. Uploads are not compared: two different
+    files would share the name "upload"."""
+    previous = None
+    if result.dataset != "upload":
+        key = (result.dataset, result.metrics["min_traits"])
+        previous = _FINGERPRINTS.get(key)
+        _FINGERPRINTS[key] = result.metrics["fingerprint"]
+    _PREVIOUS_FINGERPRINT.clear()
+    _PREVIOUS_FINGERPRINT[run_id] = previous
+
+
+def trace_lead_id() -> str | None:
+    """pick_trace_lead for the current run, worked out once per run."""
+    with _CACHE_LOCK:
+        cached = _CACHE["trace"]
+        if cached is None or cached[0] != STATE.run_id:
+            cached = (STATE.run_id, pick_trace_lead(STATE.result))
+            _CACHE["trace"] = cached
+    return cached[1]
 
 
 # ======================================================================================
@@ -144,6 +212,23 @@ def page_header() -> html.Div:
                 html.Button("Run Scale (50k)", id="btn-scale", className="slds-btn brand"),
                 html.Button("Reset", id="btn-reset", className="slds-btn destructive"),
             ]),
+            # Matching mode: used by the NEXT run (sample, scale or upload). Best available lets a
+            # lead go to a rep sharing 2 or 1 traits when no rep shares all 3; Strict never does.
+            html.Div(className="mode-toggle", title="How many of region, language and industry must match. "
+                                                    "Strict needs all 3, except that a lead whose industry "
+                                                    "is unknown can still match on region + language "
+                                                    "(counted as 2/3 under Leads Assigned). "
+                                                    "Applies to the next run.", children=[
+                html.Span("Matching", className="mode-label"),
+                dbc.RadioItems(id="match-mode", value=MODE_BEST, className="btn-group",
+                               inputClassName="btn-check", labelClassName="slds-btn",
+                               labelCheckedClassName="checked", options=[
+                                   {"label": "Best available (3→2→1)", "value": MODE_BEST},
+                                   {"label": "Strict (3 of 3)", "value": MODE_STRICT}]),
+            ]),
+            html.Button("Trace a messy lead", id="btn-trace", className="slds-btn", disabled=True,
+                        title="Follow one lead from the raw CSV row to its rep: the Critical lead "
+                              "with the most data fixes"),
             dcc.Upload(id="up-leads", children=html.Div("⬆ Leads CSV", id="up-leads-label", className="upload-chip")),
             dcc.Upload(id="up-reps", children=html.Div("⬆ Reps CSV", id="up-reps-label", className="upload-chip")),
             html.Button("Run Upload", id="btn-upload", className="slds-btn", disabled=True),
@@ -173,11 +258,15 @@ def canvas() -> html.Div:
     col = lambda child, lg, md=12: dbc.Col(child, xs=12, md=md, lg=lg)
     return html.Div(id="canvas", style={"display": "none"}, children=dbc.Row(className="canvas-grid", children=[
         # Row 1
-        col(component("Leads by Priority Tier", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
+        col(component("Leads by Priority Tier vs Reference", [
+            chart("ch-tiers", 330),
+            html.Div(id="tier-caption", className="chart-caption"),
+        ], "queue", "Prioritized Lead Queue", "tiers"), 5),
         col(component("Lead Routing Funnel", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
         col(html.Div(className="metric-stack", children=[
             metric("assigned", "Leads Assigned to Reps", "queue", "Prioritized Lead Queue", small=True),
             metric("review", "Waiting in Manager Review", "review", "Manager Review", small=True),
+            metric("critwait", "Critical Leads Waiting", "review", "Manager Review", small=True),
         ]), 3, 6),
         # Row 2
         col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
@@ -192,7 +281,14 @@ def canvas() -> html.Div:
             dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=4, lg=True),
             dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=4, lg=True),
         ])),
-        # Row 4
+        # Row 4: proof that the rules held on this run, and where the time went
+        dbc.Col(xs=12, children=component("Rules Check", dbc.Row(className="g-3 px-2", children=[
+            dbc.Col(html.Div(id="rules-check"), xs=12, lg=7),
+            dbc.Col([html.H3("Time per stage (measured on this run)", className="sub-title"),
+                     chart("ch-timings", 120),
+                     html.Div(id="timing-caption", className="chart-caption")], xs=12, lg=5),
+        ]), "capacity", "Rep Capacity", "rules")),
+        # Row 5
         col(component("Capacity Used by Seniority", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
         col(component("Team Capacity: Reps by % Full", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
     ]))
@@ -214,6 +310,7 @@ QUEUE_COLS = [
     {"field": "notes", "headerName": "Notes", "flex": 1.4, "minWidth": 170, "tooltipField": "notes"},
     {"field": "reason", "headerName": "Why this rep?", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
     {"field": "_search", "hide": True},                                   # driven by the search box
+    {"field": "_flag", "hide": True},                                     # driven by Status = VIP unknown
     {"field": "_run", "hide": True, "filter": "agNumberColumnFilter"},    # forces a refresh per run
 ]
 GRID_THEME = "ag-theme-quartz"
@@ -231,7 +328,7 @@ def queue_tab() -> html.Div:
                               debounce=True, size="sm"), xs=12, md=3),
             dbc.Col(_select("q-tier", "Tier", TIERS), xs=6, md=2),
             dbc.Col(_select("q-region", "Region", REGIONS), xs=6, md=2),
-            dbc.Col(_select("q-status", "Status", ["Assigned", "Manager Review"]), xs=6, md=2),
+            dbc.Col(_select("q-status", "Status", ["Assigned", "Manager Review", VIP_UNKNOWN]), xs=6, md=2),
             dbc.Col(dbc.InputGroup([dbc.InputGroupText("Group by"), dbc.Select(id="q-group", value="none", options=[
                 {"label": "None", "value": "none"}, {"label": "Tier", "value": "priority"},
                 {"label": "Rep", "value": "rep"}])], size="sm"), xs=6, md=3),
@@ -260,20 +357,32 @@ def review_tab() -> html.Div:
         {"field": "priority", "headerName": "Tier", "width": 110, "cellRenderer": "TierBadge"},
         {"field": "score", "headerName": "Score", "width": 90, "filter": "agNumberColumnFilter"},
         {"field": "overflow_reason", "headerName": "Why it's here", "flex": 1.5, "minWidth": 210},
+        {"field": "suggested_action", "headerName": "Suggested action", "flex": 3.5, "minWidth": 380,
+         "tooltipField": "suggested_action"},
         {"field": "region", "headerName": "Region", "width": 135},
         {"field": "language", "headerName": "Language", "width": 110},
         {"field": "industry", "headerName": "Industry", "width": 130},
         {"field": "reason", "headerName": "What happened", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
+        # hidden: AG Grid only keeps filters on columns it knows, and a filter change is what
+        # makes it fetch fresh pages (new run -> _run, chip click -> _chip)
+        {"field": "_chip", "hide": True},
+        {"field": "_run", "hide": True, "filter": "agNumberColumnFilter"},
     ]
     return html.Div([
-        html.Div("Leads no eligible rep could take. Nothing is dropped: each one needs a manager decision.",
-                 className="review-banner mb-2"),
-        dag.AgGrid(id="review-grid", columnDefs=cols, rowData=[], className=GRID_THEME,
-                   defaultColDef={"sortable": True, "filter": True, "floatingFilter": True, "resizable": True,
-                                  "suppressHeaderMenuButton": True},
-                   dashGridOptions={"pagination": True, "paginationPageSize": 20, "tooltipShowDelay": 300,
+        html.Div(id="review-banner", className="review-banner mb-2"),
+        dbc.RadioItems(id="review-filter", value="all", options=[{"label": "All", "value": "all"}],
+                       className="chip-group mb-2", inputClassName="btn-check", labelClassName="chip",
+                       labelCheckedClassName="checked", inline=True),
+        # Server-side pages (like the lead queue): a run can leave thousands of leads in review, and
+        # the browser only ever receives the 20 rows on screen.
+        dag.AgGrid(id="review-grid", columnDefs=cols, rowModelType="infinite", className=GRID_THEME,
+                   defaultColDef={"sortable": True, "filter": "agTextColumnFilter", "floatingFilter": True,
+                                  "resizable": True, "suppressHeaderMenuButton": True},
+                   dashGridOptions={"pagination": True, "paginationPageSize": 20, "cacheBlockSize": 20,
+                                    "maxBlocksInCache": 10, "tooltipShowDelay": 300,
                                     "rowSelection": {"mode": "singleRow", "checkboxes": False,
                                                      "enableClickSelection": True}},
+                   filterModel={"_run": {"filterType": "number", "type": "equals", "filter": 0}},
                    style={"height": "500px"}),
     ])
 
@@ -309,9 +418,18 @@ def capacity_tab() -> html.Div:
 
 
 def quality_tab() -> html.Div:
-    return dbc.Row([
-        dbc.Col([html.H3("Leads", className="component-title mb-2"), html.Div(id="dq-leads")], lg=6),
-        dbc.Col([html.H3("Representatives", className="component-title mb-2"), html.Div(id="dq-reps")], lg=6),
+    return html.Div([
+        dbc.Row([
+            dbc.Col([html.H3("Leads", className="component-title mb-2"), html.Div(id="dq-leads")], lg=6),
+            dbc.Col([html.H3("Representatives", className="component-title mb-2"), html.Div(id="dq-reps")], lg=6),
+        ]),
+        html.H3("Every value we found", className="component-title mt-3 mb-1"),
+        html.Div("Every different way each column was written in the file, and what the router used instead. "
+                 "Open a field to see its values.", className="hint mb-2"),
+        dbc.Row([
+            dbc.Col([html.H4("Leads", className="sub-title"), html.Div(id="va-leads")], lg=6),
+            dbc.Col([html.H4("Representatives", className="sub-title"), html.Div(id="va-reps")], lg=6),
+        ]),
     ])
 
 
@@ -382,29 +500,34 @@ def stash_reps(contents, filename):
     Output("run-store", "data"), Output("alert-area", "children"),
     Input("btn-sample", "n_clicks"), Input("btn-scale", "n_clicks"), Input("btn-reset", "n_clicks"),
     Input("btn-upload", "n_clicks"), State("up-leads-store", "data"), State("up-reps-store", "data"),
+    State("match-mode", "value"),
     prevent_initial_call=True,
     running=[(Output("btn-sample", "disabled"), True, False), (Output("btn-scale", "disabled"), True, False),
              (Output("btn-reset", "disabled"), True, False)],
 )
-def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps):
-    """Runs when one of the buttons is clicked (ctx.triggered_id says which). Errors become an alert."""
+def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps, mode=MODE_BEST):
+    """Runs when one of the buttons is clicked (ctx.triggered_id says which). Errors become an alert.
+    `mode` is the matching toggle: the minimum traits (1 or 3) this run requires."""
     trigger = ctx.triggered_id
     if trigger == "btn-reset":
         reset_state()
         return {"run_id": STATE.run_id}, None
+    min_traits = MODE_STRICT if str(mode) == str(MODE_STRICT) else MODE_BEST
     try:
         if trigger == "btn-upload":
             if not up_leads:
                 raise PipelineError("Upload a leads CSV first.")
+            start = time.perf_counter()  # reading the uploaded files is the "load" stage
             leads_df = _decode_upload(up_leads, "Leads", LEAD_COLUMNS, LEAD_REQUIRED)
             reps_df = (_decode_upload(up_reps, "Reps", REP_COLUMNS, REP_REQUIRED) if up_reps
                        else read_csv(dataset_paths("scale")[1], "Reps", REP_COLUMNS, REP_REQUIRED))
-            result = run_pipeline_frames(leads_df, reps_df, dataset="upload")
+            result = run_pipeline_frames(leads_df, reps_df, dataset="upload", min_traits=min_traits,
+                                         timings={"load": time.perf_counter() - start})
         else:
-            result = run_dataset("sample" if trigger == "btn-sample" else "scale")
+            result = run_dataset("sample" if trigger == "btn-sample" else "scale", min_traits=min_traits)
     except (PipelineError, KeyError) as error:
         return no_update, dbc.Alert(str(error), color="danger", dismissable=True)
-    STATE.set(result)
+    remember_fingerprint(STATE.set(result), result)
     frames()  # build the result tables now, before the redraw callbacks ask for them
     warnings = result.lead_quality.warnings + result.rep_quality.warnings
     return {"run_id": STATE.run_id}, (dbc.Alert(" ".join(warnings), color="warning", dismissable=True) if warnings else None)
@@ -413,31 +536,52 @@ def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps):
 # ======================================================================================
 # Callback: redraw the whole dashboard after a run or reset
 # ======================================================================================
-METRIC_KEYS = ["assigned", "review", "critical", "fairness", "speed", "util", "fixed"]
-CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-reasons", "ch-capacity", "ch-util"]
+METRIC_KEYS = ["assigned", "review", "critwait", "critical", "fairness", "speed", "util", "fixed"]
+CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-reasons", "ch-capacity", "ch-util",
+             "ch-timings"]
+# Everything render() writes, by name. Callers (and tests) get a dict with these keys.
+RENDER_OUTPUTS = {
+    "empty_style": Output("empty-state", "style"), "canvas_style": Output("canvas", "style"),
+    "details_style": Output("details", "style"), "as_of": Output("as-of", "children"),
+    **{f"value_{k}": Output(f"m-{k}", "children") for k in METRIC_KEYS},
+    **{f"caption_{k}": Output(f"m-{k}-cap", "children") for k in METRIC_KEYS},
+    "critwait_class": Output("m-critwait", "className"),
+    **{f"fig_{c}": Output(c, "figure") for c in CHART_IDS},
+    "tier_caption": Output("tier-caption", "children"), "rules_check": Output("rules-check", "children"),
+    "timing_caption": Output("timing-caption", "children"),
+    "review_label": Output("tab-review", "label"), "review_banner": Output("review-banner", "children"),
+    "review_filter_options": Output("review-filter", "options"), "review_filter_value": Output("review-filter", "value"),
+    "dq_leads": Output("dq-leads", "children"), "dq_reps": Output("dq-reps", "children"),
+    "va_leads": Output("va-leads", "children"), "va_reps": Output("va-reps", "children"),
+    "trace_disabled": Output("btn-trace", "disabled"),
+}
+METRIC_CLASS = "metric-value small"
 
 
-@callback(
-    Output("empty-state", "style"), Output("canvas", "style"), Output("details", "style"), Output("as-of", "children"),
-    *[Output(f"m-{k}", "children") for k in METRIC_KEYS], *[Output(f"m-{k}-cap", "children") for k in METRIC_KEYS],
-    *[Output(c, "figure") for c in CHART_IDS],
-    Output("tab-review", "label"), Output("review-grid", "rowData"), Output("dq-leads", "children"), Output("dq-reps", "children"),
-    Input("run-store", "data"),
-)
-def render(_store):
+@callback(output=RENDER_OUTPUTS, inputs=[Input("run-store", "data")])
+def render(_store=None) -> dict[str, Any]:
     r = STATE.result
     if r is None:
         blank = charts.empty()
-        return ({}, {"display": "none"}, {"display": "none"}, "No data yet · Viewing as Sales Operations",
-                *["—"] * len(METRIC_KEYS), *[""] * len(METRIC_KEYS), *[blank] * len(CHART_IDS),
-                "Manager Review", [], None, None)
+        return {
+            "empty_style": {}, "canvas_style": {"display": "none"}, "details_style": {"display": "none"},
+            "as_of": "No data yet · Viewing as Sales Operations",
+            **{f"value_{k}": "—" for k in METRIC_KEYS}, **{f"caption_{k}": "" for k in METRIC_KEYS},
+            "critwait_class": METRIC_CLASS,
+            **{f"fig_{c}": blank for c in CHART_IDS},
+            "tier_caption": None, "rules_check": None, "timing_caption": None,
+            "review_label": "Manager Review", "review_banner": None,
+            "review_filter_options": [{"label": "All", "value": "all"}], "review_filter_value": "all",
+            "dq_leads": None, "dq_reps": None, "va_leads": None, "va_reps": None, "trace_disabled": True,
+        }
 
     m, (results, reps) = r.metrics, frames()
     lq, rq = r.lead_quality, r.rep_quality
     seconds = r.timings["total"]
 
     as_of = (f"As of {datetime.now():%b %d, %Y, %I:%M %p} · {r.dataset.title()} dataset · "
-             f"{m['total_leads']:,} leads routed in {seconds:.2f} s · Viewing as Sales Operations")
+             f"{m['total_leads']:,} leads routed in {seconds:.2f} s · Matching: {m['matching_mode']} · "
+             "Viewing as Sales Operations")
 
     # --- match quality: 3 of 3 traits vs. 2 of 3 (see routing.pools_to_try)
     levels = m["match_levels"]
@@ -446,10 +590,13 @@ def render(_store):
         by_traits[MatchLevel(name).traits_matched] += count
 
     # --- big numbers: (value, caption)
+    waiting = m["critical_waiting"]
     metrics = {
         "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · traits matched 3/3: {by_traits[3]:,} · "
                                            f"2/3: {by_traits[2]:,} · 1/3: {by_traits[1]:,}"),
         "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
+        "critwait": (f"{waiting:,}", "Critical leads with no owner yet: handle these first" if waiting
+                     else "Every Critical lead has a Senior or Manager"),
         "critical": (f"{m['critical_senior_rate']}%",
                      html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
                                 html.Span(f"{m['junior_critical_violations']} given to Juniors", className="metric-good")])),
@@ -479,23 +626,159 @@ def render(_store):
     else:
         reason_fig = charts.donut(["No overflow"], [1], "0", "Reason", [charts.LIGHT_GREY])
         reason_fig.update_traces(textinfo="none", hoverinfo="skip")
-    figures = [
-        charts.tier_bar(m["tiers"]),
-        charts.routing_funnel(stages),
-        charts.donut(list(region_counts.index), list(region_counts.values), f"{m['total_leads']:,}", "Region"),
-        charts.destination_columns(results),
-        reason_fig,
-        charts.capacity_by_seniority(reps),
-        charts.utilization_histogram(reps),
-    ]
+    timed = [s for s in TIMED_STAGES if s in r.timings]
+    figures = {
+        "ch-tiers": charts.tier_vs_reference(m["tiers"], m["tier_share"], m["expected_tier_share"]),
+        "ch-funnel": charts.routing_funnel(stages),
+        "ch-region": charts.donut(list(region_counts.index), list(region_counts.values),
+                                  f"{m['total_leads']:,}", "Region"),
+        "ch-destination": charts.destination_columns(results),
+        "ch-reasons": reason_fig,
+        "ch-capacity": charts.capacity_by_seniority(reps),
+        "ch-util": charts.utilization_histogram(reps),
+        "ch-timings": charts.stage_timings(r.timings, timed),
+    }
 
-    review_columns = ["lead_id", "company_name", "priority", "score", "overflow_reason", "region", "language",
-                      "industry", "reason"]  # only what the table shows: keeps the page light
-    review_rows = results.loc[results["status"] == "Manager Review", review_columns].to_dict("records")
-    return ({"display": "none"}, {}, {}, as_of,
-            *[metrics[k][0] for k in METRIC_KEYS], *[metrics[k][1] for k in METRIC_KEYS],
-            *figures,
-            f"Manager Review ({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq))
+    return {
+        "empty_style": {"display": "none"}, "canvas_style": {}, "details_style": {}, "as_of": as_of,
+        **{f"value_{k}": metrics[k][0] for k in METRIC_KEYS}, **{f"caption_{k}": metrics[k][1] for k in METRIC_KEYS},
+        "critwait_class": METRIC_CLASS + (" metric-bad" if waiting else ""),
+        **{f"fig_{c}": figures[c] for c in CHART_IDS},
+        "tier_caption": tier_caption(m),
+        "rules_check": rules_check(m, _PREVIOUS_FINGERPRINT.get(STATE.run_id), r.dataset),
+        "timing_caption": timing_caption(r.timings, timed),
+        "review_label": f"Manager Review ({m['overflow']:,})", "review_banner": review_banner(m),
+        "review_filter_options": review_filter_options(results), "review_filter_value": "all",
+        "dq_leads": _quality_table(lq), "dq_reps": _quality_table(rq),
+        "va_leads": value_audit(lq), "va_reps": value_audit(rq),
+        "trace_disabled": False,
+    }
+
+
+# ---- pieces of render(), kept separate so each one is easy to read and to test -------
+def tier_caption(m: dict[str, Any]) -> list:
+    """Why our tier mix differs from the cheat sheet's reference, and Critical demand vs capacity."""
+    lines = []
+    reference = m.get("expected_tier_share") or {}
+    if "Critical" in reference:
+        gap = m["tier_share"].get("Critical", 0.0) - reference["Critical"]
+        if m["vip_total"]:
+            why = (f"{m['vip_total']:,} VIP referrals are always Critical, {m['vip_promoted']:,} of them "
+                   "would otherwise score lower")
+        else:
+            why = "no VIP referrals in this file, so the tiers come from points alone"
+        lines.append(html.Div(f"{gap:+.1f} pts Critical vs the reference mix: {why}."))
+    lines.append(html.Div([html.B(f"{m['critical_total']:,}"), " Critical leads · ",
+                           html.B(f"{m['critical_slots']:,}"), " Senior + Manager slots (the only reps "
+                           "allowed to take them)"]))
+    return lines
+
+
+def _check_row(state: str, label: str, value, hint: str | None = None) -> html.Tr:
+    icon = {"ok": "✓", "bad": "✗", "info": "#"}[state]
+    return html.Tr([html.Td(icon, className=f"check-icon check-{state}"), html.Td(label, className="check-label"),
+                    html.Td([html.Div(value, className="check-value"),
+                             html.Div(hint, className="hint") if hint else None])])
+
+
+def rules_check(m: dict[str, Any], previous_fingerprint: str | None = None, dataset: str = "") -> html.Table:
+    """The routing rules, checked on this run's actual decisions: ✓ held, ✗ broken."""
+    merged, renamed = m["rows_merged_as_duplicates"], m["ids_renamed"]
+    rows_note = f"{m['rows_in']:,} in → {m['rows_out']:,} out"
+    if renamed:
+        rows_note += f" · {renamed:,} reused ID{'s' if renamed != 1 else ''} kept as -2"
+    if merged:
+        rows_note += f" · {merged:,} exact cop{'ies' if merged != 1 else 'y'} merged"
+    juniors, over = m["junior_critical_violations"], m["capacity_violations"]
+    fingerprint = m["fingerprint"]
+    if previous_fingerprint is None:
+        fp_state, fp_hint = "info", "Reset and run again: the fingerprint stays the same."
+    elif previous_fingerprint == fingerprint:
+        fp_state, fp_hint = "ok", (f"Same as the previous {dataset} run in this mode: every decision is identical. "
+                                   "Reset and run again: the fingerprint stays the same.")
+    else:
+        fp_state, fp_hint = "info", (f"The previous {dataset} run in this mode gave {previous_fingerprint}: "
+                                     "the input file or the rules changed since.")
+    return html.Table(className="rules-table w-100", children=html.Tbody([
+        _check_row("ok" if juniors == 0 else "bad", "Critical leads given to Juniors", f"{juniors:,}"),
+        _check_row("ok" if over == 0 else "bad", "Reps over max capacity", f"{over:,}"),
+        _check_row("ok" if m["rows_in"] == m["rows_out"] + merged else "bad", "Rows in = rows out", rows_note),
+        _check_row("ok" if m["every_row_once"] else "bad", "Every row routed exactly once",
+                   ("Yes: one decision per lead, none lost or doubled"
+                    + (f" (after merging {merged:,} exact cop{'ies' if merged != 1 else 'y'})" if merged else ""))
+                   if m["every_row_once"] else "No"),
+        _check_row(fp_state, "Run fingerprint", html.Code(fingerprint, className="fingerprint"), fp_hint),
+    ]))
+
+
+def timing_caption(timings: dict[str, float], stages: list[str]) -> str:
+    if not stages:
+        return ""
+    slowest = max(stages, key=lambda s: timings[s])
+    return f"Slowest stage: {slowest} ({timings[slowest]:.2f} s of {timings['total']:.2f} s in total)."
+
+
+def review_banner(m: dict[str, Any]) -> list:
+    """What Manager Review is, and what a manager does with each lead in it."""
+    if not m["overflow"]:
+        return [html.B("No lead needs a manager this run. "), "Every lead found an eligible rep with room."]
+    return [html.B(f"{m['overflow']:,} of {m['total_leads']:,} leads ({m['overflow_rate']}%) need a manager. "),
+            "Only leads no eligible rep could take land here, and nothing is dropped. For each one: ",
+            html.B("1"), " read the suggested action, ", html.B("2"), " reassign the lead or raise a rep's capacity, ",
+            html.B("3"), " re-run the routing."]
+
+
+REVIEW_COLUMNS = ["lead_id", "company_name", "priority", "score", "overflow_reason", "suggested_action",
+                  "region", "language", "industry", "reason"]  # only what the table shows: keeps the page light
+_TIER_RANK = {tier: rank for rank, tier in enumerate(TIERS)}
+
+
+def review_filter_options(results: pd.DataFrame) -> list[dict]:
+    """Quick-filter chips for the Manager Review tab: All, Critical only, then one per reason."""
+    review = results[results["status"] == "Manager Review"]
+    options = [{"label": f"All ({len(review):,})", "value": "all"},
+               {"label": f"Critical only ({int((review['priority'] == 'Critical').sum()):,})", "value": "critical"}]
+    for reason, count in review["overflow_reason"].value_counts().items():
+        options.append({"label": f"{reason} ({count:,})", "value": f"reason:{reason}"})
+    return options
+
+
+def review_frame(choice: str | None = "all") -> pd.DataFrame:
+    """Manager Review leads for the chosen chip, Critical first, then highest score."""
+    results, _ = frames()
+    review = results[results["status"] == "Manager Review"]
+    if choice == "critical":
+        review = review[review["priority"] == "Critical"]
+    elif choice and choice.startswith("reason:"):
+        review = review[review["overflow_reason"] == choice.removeprefix("reason:")]
+    review = review.assign(_rank=review["priority"].map(_TIER_RANK)).sort_values(
+        ["_rank", "score", "lead_id"], ascending=[True, False, True], kind="stable")
+    return review[REVIEW_COLUMNS]
+
+
+def review_page(request: dict) -> dict:
+    """One page of the Manager Review grid. The chip choice travels in the filterModel as "_chip"
+    (not a real column, so the column filters ignore it); with no column sorted, the default
+    Critical-first order is kept."""
+    choice = ((request.get("filterModel") or {}).get("_chip") or {}).get("filter", "all")
+    return rows_for_request(review_frame(choice), request)
+
+
+@callback(Output("review-grid", "filterModel"),
+          Input("run-store", "data"), Input("review-filter", "value"), State("review-grid", "filterModel"))
+def review_filters(store, choice, current):
+    """A new run or chip changes the filterModel, which makes the grid fetch fresh pages."""
+    model = dict(current or {})
+    model["_chip"] = {"filterType": "text", "type": "equals", "filter": choice or "all"}
+    model["_run"] = {"filterType": "number", "type": "equals", "filter": (store or {}).get("run_id", 0)}
+    return model
+
+
+@callback(Output("review-grid", "getRowsResponse"), Input("review-grid", "getRowsRequest"))
+def review_rows(request):
+    if not request:
+        return no_update
+    return review_page(request)
 
 
 def _quality_table(report) -> list:
@@ -519,6 +802,55 @@ def _quality_table(report) -> list:
     ])
     return [summary, dbc.Table.from_dataframe(pd.DataFrame(rows), striped=True, hover=True, size="sm",
                                               className="dq-table")]
+
+
+# status from cleaning -> (badge text, css class)
+VALUE_STATUS = {"ok": ("as is", "vs-ok"), "fixed": ("fixed", "vs-fixed"), "missing": ("missing", "vs-missing"),
+                "invalid": ("unreadable", "vs-invalid")}
+VALUE_ROWS_SHOWN = 40   # an uploaded file could hold thousands of spellings; keep each table light
+
+
+def _raw_text(value: Any) -> html.Code:
+    """A raw CSV value exactly as written (spaces kept visible), or (blank)."""
+    return html.Code("(blank)" if value in (None, "") else str(value), className="raw-value")
+
+
+def _status_badge(status: str) -> html.Span:
+    text, css = VALUE_STATUS.get(status, (status, "vs-ok"))
+    return html.Span(text, className=f"vs-badge {css}")
+
+
+def value_audit(report) -> list:
+    """"Every value we found": one collapsible table per field. Text fields list each raw spelling and
+    what it became; number fields list each way of writing the number with an example."""
+    blocks = []
+    for name, rows in report.value_map.items():
+        label = FIELD_LABELS.get(name, name.replace("_", " ").title())
+        shown, hidden = rows[:VALUE_ROWS_SHOWN], rows[VALUE_ROWS_SHOWN:]
+        if rows and "format" in rows[0]:
+            summary = f"{label} · {len(rows)} way{'s' if len(rows) != 1 else ''} of writing it"
+            head = ["How it was written", "Rows", "Example", "What we used"]
+            body = [html.Tr([html.Td(v["format"]), html.Td(f"{v['count']:,}", className="num"),
+                             html.Td(_raw_text(v["example"])), html.Td(v["becomes"])]) for v in shown]
+        else:
+            statuses = {s: sum(1 for v in rows if v["status"] == s) for s in VALUE_STATUS}
+            parts = [f"{n} {VALUE_STATUS[s][0]}" for s, n in statuses.items() if n]
+            summary = f"{label} · {len(rows)} different value{'s' if len(rows) != 1 else ''}: " + ", ".join(parts)
+            with_backup = any(v.get("alternate") for v in rows)
+            head = ["In the file", "What we used", "Rows", "Status"] + (["Backup (2nd value)"] if with_backup else [])
+            body = [html.Tr([html.Td(_raw_text(v["raw"])), html.Td(v["cleaned"]),
+                             html.Td(f"{v['count']:,}", className="num"), html.Td(_status_badge(v["status"]))]
+                            + ([html.Td(v.get("alternate") or "")] if with_backup else [])) for v in shown]
+        if hidden:
+            body.append(html.Tr(html.Td(f"+ {len(hidden):,} more values ({sum(v['count'] for v in hidden):,} rows); "
+                                        "the less common ones.",
+                                        colSpan=len(head), className="hint")))
+        blocks.append(html.Details(className="value-audit", children=[
+            html.Summary(summary),
+            html.Table(className="va-table w-100", children=[html.Thead(html.Tr([html.Th(h) for h in head])),
+                                                              html.Tbody(body)]),
+        ]))
+    return blocks or [html.Div("No values to show.", className="hint")]
 
 
 # ======================================================================================
@@ -572,8 +904,10 @@ def external_filters(store, search, tier, region, status, current):
     """Turn the toolbar into AG Grid's filterModel. Changing it makes the grid fetch fresh rows.
     The hidden _run filter changes with every run, so the grid always refreshes after a run."""
     model = dict(current or {})
+    flag = status if status == VIP_UNKNOWN else None   # "VIP unknown" is a flag, not a routing status
+    status = None if flag else status
     for column, value, op in (("_search", (search or "").strip().lower(), "contains"), ("priority", tier, "equals"),
-                              ("region", region, "equals"), ("status", status, "equals")):
+                              ("region", region, "equals"), ("status", status, "equals"), ("_flag", flag, "equals")):
         if value and value != "all":
             model[column] = {"filterType": "text", "type": op, "filter": value}
         else:
@@ -639,17 +973,46 @@ def capacity_table(_store, region, seniority, sort):
 # Callback: lead detail drawer
 # ======================================================================================
 @callback(Output("detail", "is_open"), Output("detail", "children"), Output("detail", "title"),
-          Input("queue-grid", "selectedRows"), Input("review-grid", "selectedRows"), prevent_initial_call=True)
-def lead_detail(queue_selection, review_selection):
-    """Clicking a row explains the score, the routing decision, and how the raw row was cleaned."""
-    selection = queue_selection if ctx.triggered_id == "queue-grid" else review_selection
-    if not selection or STATE.result is None:
+          Input("queue-grid", "selectedRows"), Input("review-grid", "selectedRows"), Input("btn-trace", "n_clicks"),
+          prevent_initial_call=True)
+def lead_detail(queue_selection, review_selection, _trace_clicks=None):
+    """Clicking a row explains the score, the routing decision, and how the raw row was cleaned.
+    "Trace a messy lead" opens the same drawer on pick_trace_lead's lead, in CSV -> dashboard order."""
+    traced = ctx.triggered_id == "btn-trace"
+    if traced:
+        lead_id = trace_lead_id()
+    else:
+        selection = queue_selection if ctx.triggered_id == "queue-grid" else review_selection
+        lead_id = selection[0]["lead_id"] if selection else None
+    view = lead_detail_view(lead_id, traced) if lead_id else None
+    if view is None:
         return False, no_update, no_update
-    lead_id = selection[0]["lead_id"]
-    lead = next((l for l in STATE.result.leads if l.id == lead_id), None)
-    decision = next((a for a in STATE.result.assignments if a.lead_id == lead_id), None)
+    return (True, *view)
+
+
+def trace_trail(lead: Lead, decision: Assignment, fixes: list) -> html.Ol:
+    """The 4 steps one lead goes through, CSV row -> dashboard. Each step links to its section below."""
+    routed = (f"{decision.rep_name} ({decision.rep_seniority.value})" if decision.rep_id else "Manager Review")
+    steps = [
+        ("Raw row", f"row {lead.row_number:,} of the CSV", "trace-raw"),
+        ("Cleaned", f"{len(fixes)} fix{'es' if len(fixes) != 1 else ''}" if fixes else "already clean", "trace-clean"),
+        ("Scored", f"{lead.score} pts · {lead.priority.value}", "trace-score"),
+        ("Routed", routed, "trace-route"),
+    ]
+    return html.Ol(className="trace-trail", children=[
+        html.Li(html.A(href=f"#{anchor}", children=[
+            html.Span(str(number), className="step-num"),
+            html.Span([html.Span(title, className="step-title"), html.Span(sub, className="step-sub")],
+                      className="step-text"),
+        ])) for number, (title, sub, anchor) in enumerate(steps, start=1)])
+
+
+def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | None:
+    """(drawer body, drawer title) for one lead, or None when the lead isn't in the current run.
+    traced=True puts the sections in trail order (raw row first, shown open)."""
+    lead, decision = find_lead(lead_id)
     if lead is None or decision is None:
-        return False, no_update, no_update
+        return None
 
     row = lambda label, value: html.Tr([html.Td(label), html.Td(value)])
     points = lambda p: html.Span(f"{p:+d}", className="points-pos" if p > 0 else "points-zero")
@@ -658,28 +1021,40 @@ def lead_detail(queue_selection, review_selection):
                      html.Thead(html.Tr([html.Th("Field"), html.Th("In the file"), html.Th("What we used")])),
                      html.Tbody([html.Tr([html.Td(f), html.Td(html.Code(b)), html.Td(a)]) for f, b, a in fixes]),
                  ]) if fixes else html.P("Nothing: this row was already clean.", className="hint mb-3"))
-    body = [
-        html.Div(className="mb-3", children=[
-            html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-2"),
-            html.Span(decision.status.value, className="slds-badge " + ("status-assigned" if decision.rep_id else "status-review")),
-        ]),
+    raw_table = html.Table(className="detail-table w-100 mt-2", children=html.Tbody(
+        [row(k.replace("_", " "), html.Code("(blank)" if v in (None, "") else str(v))) for k, v in lead.raw.items()]))
+    suggestion = ([html.H6("Suggested next step"), html.P(decision.suggested_action, className="plain-explanation "
+                                                          "suggestion mb-3")] if decision.suggested_action else [])
+    score = html.Div(id="trace-score", children=[
         html.H6("Why this priority?"),
         html.Table(className="detail-table mb-1 w-100", children=html.Tbody(
             [row(label, points(p)) for label, p in lead.score_reasons] + [row(html.B("Total"), html.B(f"{lead.score} pts"))])),
         html.Div("Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39 · a VIP referral is always Critical",
                  className="hint mb-3"),
+    ])
+    route = html.Div(id="trace-route", children=[
         html.H6("Why this rep?" if decision.rep_id else "Why is it waiting for a manager?"),
         html.P(decision.reason, className="plain-explanation mb-3"),
-        html.H6("What we cleaned up in this lead's data"),
-        fix_table,
-        html.Details(className="hint", children=[
-            html.Summary("Show the original row from the file"),
-            html.Table(className="detail-table w-100 mt-2", children=html.Tbody(
-                [row(k.replace("_", " "), html.Code("(blank)" if v in (None, "") else str(v)))
-                 for k, v in lead.raw.items()])),
-        ]),
-    ]
-    return True, body, f"{lead.id} · {lead.company_name}"
+        *suggestion,
+    ])
+    clean = html.Div(id="trace-clean", children=[html.H6("What we cleaned up in this lead's data"), fix_table])
+    raw = html.Div(id="trace-raw", className="mb-3", children=(
+        [html.H6(f"The row as it was in the file (row {lead.row_number:,})"), raw_table] if traced else
+        [html.Details(className="hint", children=[html.Summary("Show the original row from the file"), raw_table])]))
+    badges = html.Div(className="mb-3", children=[
+        html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-2"),
+        html.Span(decision.status.value, className="slds-badge " + ("status-assigned" if decision.rep_id else "status-review")),
+    ])
+    sections = [raw, clean, score, route] if traced else [score, route, clean, raw]
+    title = f"{lead.id} · {lead.company_name}"
+    if traced:
+        title = f"Traced lead: {title}"
+        which = ("The Critical lead with the most data fixes" if lead.priority is Priority.CRITICAL and fixes
+                 else "The lead with the most data fixes" if fixes else "The top lead in the queue (no row needed fixes)")
+        intro = html.P(f"{which} in this run. Follow it from the CSV row to its rep, step by step.",
+                       className="hint mb-2")
+        return [trace_trail(lead, decision, fixes), intro, badges, *sections], title
+    return [trace_trail(lead, decision, fixes), badges, *sections], title
 
 
 # ======================================================================================
@@ -693,7 +1068,7 @@ def export(*_):
     if STATE.result is None:
         return no_update
     results, reps = frames()
-    results = results.drop(columns=["_search"])
+    results = results.drop(columns=["_search", "_flag"])
     name = STATE.result.dataset
     match ctx.triggered_id:
         case "exp-results":
