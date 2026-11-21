@@ -87,10 +87,10 @@ capacity"**. C is a Junior, so it is never offered a Critical lead, even when it
 
 | Stage | 50k leads | Notes |
 |---|---|---|
-| load | ~0.1 s | pandas reads everything as text |
-| clean | ~1 s | each distinct spelling is resolved once and cached |
-| score | ~0.4 s | |
-| route | ~0.8 s | each pool has ~10–30 reps, so picking is a short scan |
-| **total** | **~2.4 s** | ≈ 20,000 leads/second |
+| load | ~0.03 s | pandas reads everything as text |
+| clean | ~0.45 s | each distinct spelling is resolved once and cached |
+| score | ~0.2 s | |
+| route | ~0.5 s | each pool has ~10–30 reps, so picking is a short scan |
+| **total** | **~1.3 s** | median of 5 runs; before/after and method in [PERFORMANCE.md](PERFORMANCE.md) |
 
 Run `pytest tests/test_benchmark.py --benchmark-only` to measure on your machine.

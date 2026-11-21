@@ -14,7 +14,7 @@ pipeline.py - STEP 4: run everything in order and measure it.
         ▼
     PipelineResult  (also kept in STATE so the dashboard can read it and Reset can clear it)
 
-Every stage is timed, so we can report e.g. "50,000 leads in 1.9 s".
+Every stage is timed, so we can report e.g. "50,000 leads in 1.3 s".
 Bad input raises PipelineError with a plain-English message instead of a Python traceback.
 """
 from __future__ import annotations

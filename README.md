@@ -7,11 +7,14 @@ Lightning-style dashboard to present the results. **No lead is ever dropped.**
 
 | Scale dataset: 50,000 leads × 1,600 reps | Result |
 |---|---|
-| Time, end to end | about 2.5 seconds (≈ 20,000 leads/second) |
+| Time, end to end | about 1.3 seconds, median of 5 runs (≈ 38,000 leads/second); see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | Assigned / Manager Review | 99.8% / 0.2% (sample: 99% / 1%) |
-| Critical leads handled by a Senior | 98.6% (the rest by Managers or Manager Review) |
+| Strict mode (3 of 3 traits only) | 94.0% assigned (sample: 19%) |
+| Critical leads handled by a Senior | 98.6% (the rest by Managers; 0 Critical leads waiting) |
 | Critical leads given to a Junior | 0 |
 | Reps over their max capacity | 0 |
+| Rows in = rows out | 50,000 → 50,000 (509 reused IDs kept as `-2`) |
+| Tier split vs the cheat sheet's 10/20/40/30 | 13.9 / 28.3 / 27.9 / 29.9 (1,587 VIPs are always Critical; 1,420 of them would score lower) |
 
 ## Quick start
 
@@ -26,11 +29,14 @@ pip install -e ".[dashboard,dev]"
 python -m app.main                       # dashboard -> http://127.0.0.1:8050
 leadrouter run --dataset sample          # 100 leads, 10 reps
 leadrouter run --dataset scale           # 50,000 leads, 1,600 reps
+leadrouter run --dataset scale --strict  # only reps sharing all 3 traits
 leadrouter run --dataset scale --out results.csv
 leadrouter run --leads my_leads.csv --reps my_reps.csv
 leadrouter compare --dataset scale       # distribution strategies side by side
 
-pytest -q                                # all tests (~10 s)
+pytest -q                                # all 217 tests (~5-15 s)
+python scripts/bench.py scale 5          # median timing per stage
+python scripts/baseline.py check <dir>   # prove a change altered no decision (after `save <dir>`)
 ```
 
 From Python:
@@ -54,16 +60,19 @@ the run buttons, and white report components on the blue-gray dashboard canvas.
 
 | Row | Components | The question it answers |
 |---|---|---|
-| 1 | Leads by Priority Tier · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review | How many leads, how urgent, and how many found an owner? |
+| Header | Run Sample / Run Scale / Reset · **Matching: Best available (3→2→1) / Strict (3 of 3)** · **Trace a messy lead** · upload · export | Run it live; show the brief's strict rule next to ours; follow one lead CSV → rep |
+| 1 | Leads by Priority Tier **vs the 10/20/40/30 reference** · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review / **Critical Leads Waiting** | How many leads, how urgent (and why the split differs), how many found an owner? |
 | 2 | Leads by Region · Where Leads Went (by Priority) · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
-| 3 | Critical → Senior % · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The four numbers to say out loud in a demo |
+| 3 | Critical → Senior % · Distribution Fairness · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
+| Rules Check | Critical→Junior 0 · over capacity 0 · rows in = rows out · every row once · run fingerprint · time per stage | Proof, not promises: the safety rules, input = output, a reset gives the identical run, which stage is slowest |
 | 4 | Capacity Used by Seniority · Reps by % Full | Is the team balanced? Are Managers held in reserve? |
-| Details | Lead Queue · Manager Review · Rep Capacity · Data Quality tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+| Details | Lead Queue (VIP-unknown filter) · Manager Review (**suggested action** per lead, Critical first) · Rep Capacity · Data Quality (**every raw value found → what we used**) | Drill down: search, filter, group, click a lead for its score breakdown |
 
 Every "View Report" link and the nav bar jump to the matching detail tab; the header search box
-filters the lead queue. **Demo script (≈90 s):** Run Sample → point at the funnel narrowing at
-"Skill match found" (only 10 reps) → Run Scale → read row 3 aloud → click a Critical lead in the
-queue → open Manager Review → Reset.
+filters the lead queue. **Demo script (≈2 min):** Run Scale → read row 3 and the Rules Check aloud
+(note the fingerprint) → Trace a messy lead (raw row → cleaned → scored → routed) → Manager Review:
+read one suggested action → switch Matching to Strict and run again (94% assigned, review grows)
+→ Reset, run Scale again: same fingerprint.
 
 ## Folder layout
 
@@ -145,7 +154,9 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
    | `2`: 3 of 3, then 2 of 3 | 61% | 98.5% |
    | **`1`: 3 → 2 → 1 of 3 (default)** | **99%** | **99.8%** |
 
-   On the scale run: 45,477 leads matched on 3 of 3, 3,660 on 2 of 3 and 776 on 1 of 3. A better
+   On the scale run: 40,165 leads matched on 3 of 3, 8,972 on 2 of 3 (5,941 of them because the
+   lead's industry is unknown, labelled *"Industry unknown: region + language"*, never "Exact") and
+   776 on 1 of 3. A better
    match always wins when that rep is free. Set `min_traits_to_match: 3` for the brief's literal
    strict rule.
 4. **Seniority.** Critical → Senior, then Manager, **never Junior**. Others → Junior or Senior, then
@@ -204,7 +215,11 @@ Then run `pytest -q`.
 | `test_distribution.py` | proportional to capacity, interleaved not bursty, value tie-break, rotation, reproducible, every strategy obeys the rules |
 | `test_pipeline.py` | empty file, one lead, zero reps, reset, clear error messages |
 | `test_properties.py` | 150 batches of random garbage never crash the pipeline or break the rules |
-| `test_benchmark.py` | 50,000 leads finish under 10 s |
+| `test_benchmark.py` | 50,000 leads finish under 10 s, with 0 Critical→Junior and 0 over capacity across the full run |
+| `test_review.py` | every Manager Review suggestion: never a Junior for a Critical lead, no slot promised twice, exceptions labelled |
+| `test_evidence.py` | strict mode, honest labels, VIP-unknown flag, value audit, every row exactly once (incl. ID collisions), same fingerprint after reset |
+| `test_performance.py` | the optimised router makes exactly the same choices as a slow reference router |
+| `test_dashboard.py` | dashboard callbacks: proof panel, strict toggle, review suggestions, trace-a-lead picker |
 
 ## Pushing this folder to GitHub
 
