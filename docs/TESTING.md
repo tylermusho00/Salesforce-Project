@@ -1,6 +1,6 @@
 # How we know Lead Router works
 
-Lead Router has **234 automated tests** written with **pytest**, the standard testing tool for Python.
+Lead Router has **244 automated tests** written with **pytest**, the standard testing tool for Python.
 Most of them check small technical details. This page covers the **business scenario tests**
 (`tests/test_business_scenarios.py`): each one checks a promise a sales manager would care about,
 in words anyone can follow.
@@ -160,7 +160,7 @@ still enough to route, and the hopeless case went to a manager with a reason a p
 
 ---
 
-## The other 223 tests
+## The other 233 tests
 
 | File | What it checks |
 |---|---|

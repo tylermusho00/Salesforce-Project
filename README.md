@@ -58,21 +58,17 @@ Styled after a Salesforce Lightning dashboard (the "Sales Team Dream Dashboard" 
 Salesforce Admins blog): a global header with search, the app nav bar, a record-style page header with
 the run buttons, and white report components on the blue-gray dashboard canvas.
 
-| Row | Components | The question it answers |
-|---|---|---|
-| Header | **Run Tests** · Run Sample / Run Scale / Reset · **Matching: Best available (3→2→1) / Strict (3 of 3)** · **Trace a messy lead** · upload · export | Run it live; show the brief's strict rule next to ours; follow one lead CSV → rep |
-| 1 | Leads by Priority Tier **vs the 10/20/40/30 reference** · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review / **Critical Leads Waiting** | How many leads, how urgent (and why the split differs), how many found an owner? |
-| 2 | Leads by Region · Where Leads Went (by Priority) · Assigned vs. Manager Review · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
-| 3 | Critical → Senior % · Distribution Fairness · Perfect Matches · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
-| Rules Check | Critical→Junior 0 · over capacity 0 · rows in = rows out · every row once · run fingerprint · time per stage | Proof, not promises: the safety rules, input = output, a reset gives the identical run, which stage is slowest |
-| 4 | Capacity Used by Seniority · Reps by % Full | Is the team balanced? Are Managers held in reserve? |
-| Details | Lead Queue (VIP-unknown filter) · Manager Review (**suggested action** per lead, Critical first) · Rep Capacity · Data Quality (**every raw value found → what we used**) | Drill down: search, filter, group, click a lead for its score breakdown |
+Three pages share the same run, matching mode, trace drawer, export and Run Tests controls:
 
-Every "View Report" link and the nav bar jump to the matching detail tab; the header search box
-filters the lead queue. **Demo script (≈2 min):** Run Scale → read row 3 and the Rules Check aloud
-(note the fingerprint) → Trace a messy lead (raw row → cleaned → scored → routed) → Manager Review:
-read one suggested action → switch Matching to Strict and run again (94% assigned, review grows)
-→ Reset, run Scale again: same fingerprint.
+| Page | Contents |
+|---|---|
+| **Dashboard** `/` | Assigned / Review / Critical Waiting / Critical-to-Senior / Capacity KPIs; tier-vs-reference, region and capacity charts |
+| **Leads & Reps** `/leads` | Paged lead queue (VIP-unknown filter), Manager Review suggestions and Critical-first filters, rep capacity tables |
+| **About** `/about` | Clean → Score → Route blueprint; fairness, Perfect Matches, speed and values fixed; Rules Check and stage timings; routing funnel, destinations, review charts; full raw-value audit |
+
+Every View Report link opens the relevant page and tab; header search opens the filtered lead queue.
+**Demo:** Run Scale → inspect Dashboard → About: Rules Check and timings → Trace a messy lead →
+Leads & Reps: Manager Review suggestions → Strict and re-run → Reset and repeat.
 
 ## Folder layout
 
@@ -207,7 +203,7 @@ Then run `pytest -q`.
 
 ## Tests
 
-The merged suite has **234 passing tests**. See [integration validation](docs/INTEGRATION_VALIDATION.md) for the comparison with the pre-merge version.
+The merged suite has **244 passing tests**. See [integration validation](docs/INTEGRATION_VALIDATION.md) for the comparison with the pre-merge version.
 
 | File | What it proves |
 |---|---|

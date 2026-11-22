@@ -273,3 +273,64 @@ def test_business_tests_preserve_active_strict_run():
     assert "8 of 8 checks passed" in text_of(panel)
     assert STATE.result is result and STATE.run_id == run_id
     assert "Strict" in dashboard.render()["as_of"]
+
+
+# Page navigation must preserve the shared run and all local evidence widgets.
+def test_three_page_layout_keeps_every_render_target_once():
+    import json
+    from collections import Counter
+
+    def ids(node):
+        if isinstance(node, (list, tuple)):
+            return [item for child in node for item in ids(child)]
+        if node is None or isinstance(node, (str, int, float)):
+            return []
+        found = [json.dumps(node.id, sort_keys=True)] if hasattr(node, "id") else []
+        return found + ids(getattr(node, "children", None))
+
+    counts = Counter(ids(dashboard.layout()))
+    assert all(count == 1 for count in counts.values())
+    for output in dashboard.RENDER_OUTPUTS.values():
+        assert counts[json.dumps(output.component_id, sort_keys=True)] == 1
+    assert dashboard.TAB_PAGE["quality"] == "/about"
+
+
+@pytest.mark.parametrize("path,expected", [("/", "/"), ("/leads", "/leads"),
+                                           ("/about", "/about"), ("/missing", "/")])
+def test_page_navigation_preserves_active_strict_run(path, expected):
+    result = show(sample(min_traits=3))
+    run_id = STATE.run_id
+
+    def call():
+        context_value.set(AttributeDict(outputs_list=[None, None, None,
+            [{"id": {"page": page}} for page in dashboard.PAGES]]))
+        return dashboard.show_page(path)
+
+    out = copy_context().run(call)
+    for style, page in zip(out[:3], dashboard.PAGES):
+        assert style == ({} if page == expected else {"display": "none"})
+    assert out[3] == ["nav-item active" if page == expected else "nav-item" for page in dashboard.PAGES]
+    assert out[4] == dashboard.PAGES[expected][1]
+    assert STATE.result is result and STATE.run_id == run_id
+
+
+@pytest.mark.parametrize("tab,page", [("queue", "/leads"), ("review", "/leads"),
+                                      ("capacity", "/leads"), ("quality", "/about")])
+def test_report_links_open_the_page_with_the_requested_evidence(tab, page):
+    import json
+
+    def call():
+        clicked = {"type": "open-tab", "tab": tab, "key": "test"}
+        context_value.set(AttributeDict(triggered_inputs=[{
+            "prop_id": json.dumps(clicked) + ".n_clicks", "value": 1}]))
+        return dashboard.open_tab([1])
+
+    path, active = copy_context().run(call)
+    assert path == page
+    assert active == (tab if page == "/leads" else dashboard.no_update)
+
+
+def test_global_search_opens_lead_queue_without_replacing_the_run():
+    result = show(sample())
+    assert dashboard.global_search("Acme") == ("Acme", "queue", "/leads")
+    assert STATE.result is result
