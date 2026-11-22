@@ -1,0 +1,23 @@
+LEAD ROUTER - HOW TO RUN (Salesforce Ignite Challenge)
+
+You need Python 3.11 or newer: https://www.python.org/downloads/
+(On Windows, tick "Add python.exe to PATH" during setup.)
+
+1. Unzip this folder anywhere (right-click > Extract All). Don't run it from inside the zip.
+2. Start it:
+     Windows: double-click START_WINDOWS.bat
+     Mac:     right-click start_mac.command > Open  (Linux: bash start_mac.command)
+3. The first run installs the libraries (about 1-2 minutes, needs internet).
+   After that it starts in a few seconds.
+4. The dashboard opens in your browser at http://127.0.0.1:8050
+   Click "Run Scale (50k)" to route the full 50,000-lead challenge file.
+5. To stop it, close the black terminal window.
+
+Without the scripts (any OS):
+    python -m venv .venv
+    .venv\Scripts\activate        (Mac/Linux: source .venv/bin/activate)
+    pip install -r requirements.txt
+    python -m app.main            then open http://127.0.0.1:8050
+
+Run the tests:  python -m pytest      (216 tests, about 15 seconds)
+More detail: README.md
