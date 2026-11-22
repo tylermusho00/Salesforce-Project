@@ -3,10 +3,12 @@ Lead Router dashboard: a Salesforce Lightning-style "dream dashboard" for the ro
 
 Run (from the repository root):   python -m app.main   ->   http://127.0.0.1:8050
 
-Three pages, each with its own address (the nav bar switches pages; nothing scrolls):
-    /         Dashboard      the at-a-glance view: 4 big numbers + 4 charts
-    /leads    Leads & Reps   lead queue, Manager Review and rep capacity tables
-    /about    About          match quality, speed, how it works, data quality
+Five pages, each with its own address (the nav bar switches pages; nothing scrolls):
+    /         Dashboard       the at-a-glance view: 4 big numbers + 4 charts
+    /leads    Leads & Reps    lead queue and rep capacity tables
+    /review   Manager Review  leads waiting for a manager: closest reps + assign by hand
+    /tests    Tests           runs the real pytest suite and says what each test proves
+    /about    About           match quality, speed, how it works, data quality
 
 Every page shares the same top: global header (logo, search), the nav bar, and the page header
 (title, "As of ...", Run Sample / Run Scale / Reset, upload, export, Run Tests).
@@ -21,6 +23,8 @@ from __future__ import annotations
 import base64
 import io
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 
@@ -29,14 +33,15 @@ import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
 
-from app import charts
+from app import charts, test_runner
 from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
 from lead_router.config import dataset_paths
 from lead_router.explain import FIELD_LABELS, lead_fixes
 from lead_router.export import reps_frame, results_frame, salesforce_frame
 from lead_router import scenarios
-from lead_router.models import MatchLevel, OverflowReason
+from lead_router.models import AssignmentStatus, MatchLevel, OverflowReason
+from lead_router.review import ReviewError, closest_reps, manual_assign, rep_choices
 from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, run_dataset, \
     run_pipeline_frames
 
@@ -47,10 +52,12 @@ REGIONS = ["North America", "Europe", "Asia-Pacific", "Unknown"]
 PAGES = {
     "/": ("Dashboard", "Lead Routing Dashboard"),
     "/leads": ("Leads & Reps", "Leads & Reps"),
+    "/review": ("Manager Review", "Manager Review"),
+    "/tests": ("Tests", "Tests: Proof It Works"),
     "/about": ("About", "About Lead Router"),
 }
-# which page each detail tab lives on
-TAB_PAGE = {"queue": "/leads", "review": "/leads", "capacity": "/leads", "about": "/about"}
+# which page each "View Report" target lives on
+TAB_PAGE = {"queue": "/leads", "capacity": "/leads", "review": "/review", "tests": "/tests", "about": "/about"}
 
 # ======================================================================================
 # Result tables, built once per run and cached (keyed by STATE.run_id)
@@ -116,7 +123,7 @@ def global_header() -> html.Div:
 
 
 def app_nav() -> html.Div:
-    """Three tabs, three pages. dcc.Link changes the address without reloading the page."""
+    """One tab per page. dcc.Link changes the address without reloading the page."""
     return html.Div(className="app-nav", children=[html.Div("Lead Router", className="app-name")] + [
         dcc.Link(label, href=path, className="nav-item", id={"type": "nav", "page": path})
         for path, (label, _) in PAGES.items()
@@ -154,7 +161,7 @@ def page_header() -> html.Div:
                 dbc.DropdownMenuItem("Rep capacity (CSV)", id="exp-reps"),
             ]),
             html.Button("✓ Run Tests", id="btn-tests", className="slds-btn tests-btn",
-                        title="Run the business scenario checks and see the results"),
+                        title="Open the Tests page and run the full pytest suite"),
             dcc.Download(id="download"),
         ]),
     ])
@@ -243,28 +250,43 @@ def queue_tab() -> html.Div:
     ])
 
 
-def review_tab() -> html.Div:
+def review_page() -> html.Div:
+    """Leads waiting for a manager (left) and the assign panel for the selected lead (right)."""
     cols = [
-        {"field": "lead_id", "headerName": "Lead", "width": 115, "pinned": "left"},
-        {"field": "company_name", "headerName": "Company", "flex": 2, "minWidth": 200},
-        {"field": "priority", "headerName": "Tier", "width": 110, "cellRenderer": "TierBadge"},
-        {"field": "score", "headerName": "Score", "width": 90, "filter": "agNumberColumnFilter"},
-        {"field": "overflow_reason", "headerName": "Why it's here", "flex": 1.5, "minWidth": 210},
-        {"field": "region", "headerName": "Region", "width": 135},
-        {"field": "language", "headerName": "Language", "width": 110},
-        {"field": "industry", "headerName": "Industry", "width": 130},
-        {"field": "reason", "headerName": "What happened", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
+        {"field": "lead_id", "headerName": "Lead", "width": 110, "pinned": "left"},
+        {"field": "company_name", "headerName": "Company", "flex": 2, "minWidth": 170},
+        {"field": "priority", "headerName": "Tier", "width": 105, "cellRenderer": "TierBadge"},
+        {"field": "score", "headerName": "Score", "width": 85, "filter": "agNumberColumnFilter"},
+        {"field": "overflow_reason", "headerName": "Why it's waiting", "flex": 1.6, "minWidth": 200},
+        {"field": "region", "headerName": "Region", "width": 130},
+        {"field": "language", "headerName": "Language", "width": 105},
+        {"field": "industry", "headerName": "Industry", "width": 125},
     ]
-    return html.Div([
-        html.Div("Leads no eligible rep could take. Nothing is dropped: each one needs a manager decision.",
-                 className="review-banner mb-2"),
-        dag.AgGrid(id="review-grid", columnDefs=cols, rowData=[], className=GRID_THEME,
-                   defaultColDef={"sortable": True, "filter": True, "floatingFilter": True, "resizable": True,
-                                  "suppressHeaderMenuButton": True},
-                   dashGridOptions={"pagination": True, "paginationPageSize": 20, "tooltipShowDelay": 300,
-                                    "rowSelection": {"mode": "singleRow", "checkboxes": False,
-                                                     "enableClickSelection": True}},
-                   style={"height": "500px"}),
+    queue = html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2(
+            ["Leads waiting for a manager ", html.Span(id="review-count")], className="component-title")),
+        html.Div(className="component-body review-body", children=[
+            html.P("No allowed rep had room for these leads, so the router stopped and asked. Nothing is dropped. "
+                   "Pick a lead to see the closest reps who can still take it.", className="hint mb-2"),
+            dag.AgGrid(id="review-grid", columnDefs=cols, rowData=[], className=GRID_THEME,
+                       defaultColDef={"sortable": True, "filter": True, "floatingFilter": True, "resizable": True,
+                                      "suppressHeaderMenuButton": True},
+                       dashGridOptions={"pagination": True, "paginationPageSize": 20,
+                                        "rowSelection": {"mode": "singleRow", "checkboxes": False,
+                                                         "enableClickSelection": True}},
+                       style={"height": "560px"}),
+        ]),
+    ])
+    assign = html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2("Assign this lead", className="component-title")),
+        html.Div(className="component-body review-panel", children=[html.Div(id="review-msg"),
+                                                                   html.Div(id="review-panel")]),
+    ])
+    return html.Div(className="page-stack", children=[
+        dbc.Row(className="canvas-grid", children=[
+            dbc.Col(queue, xs=12, xl=7),
+            dbc.Col(assign, xs=12, xl=5),
+        ]),
     ])
 
 
@@ -312,7 +334,7 @@ def about_page() -> html.Div:
             step("3", "Route", "Most urgent first, to the best-matching rep with room. Critical → Senior → Manager, "
                                "never Junior. Equal reps share work evenly."),
         ]),
-        html.P("Want proof? Click ✓ Run Tests at the top of any page.", className="hint about-proof"),
+        html.P("Want proof? Open the Tests tab: it runs our full pytest suite live.", className="hint about-proof"),
     ])
     quality = html.Div(className="component", children=[
         html.Div(className="component-head", children=html.H2("Data Quality: what we cleaned up", className="component-title")),
@@ -337,23 +359,25 @@ def details() -> html.Div:
     return html.Div(id="details", className="component details", style={"display": "none"}, children=
         dbc.Tabs(id="tabs", active_tab="queue", children=[
             dbc.Tab(queue_tab(), label="Prioritized Lead Queue", tab_id="queue"),
-            dbc.Tab(review_tab(), label="Manager Review", tab_id="review", id="tab-review"),
             dbc.Tab(capacity_tab(), label="Rep Capacity", tab_id="capacity"),
         ]))
 
 
-def tests_modal() -> dbc.Modal:
-    """The 'Run Tests' panel: runs the business scenario checks (lead_router/scenarios.py, the same
-    code pytest runs) and shows one card per check."""
-    return dbc.Modal(id="tests-modal", size="xl", scrollable=True, is_open=False, children=[
-        dbc.ModalHeader(dbc.ModalTitle("Is Lead Router working correctly?")),
-        dbc.ModalBody(dcc.Loading(type="circle", color="#0176D3", children=html.Div(
-            id="tests-body", className="tests-body"))),
-        dbc.ModalFooter([
-            html.Span("These are the same checks our automated pytest suite runs on every change.", className="hint me-auto"),
-            html.Button("↻ Run again", id="tests-again", className="slds-btn"),
-            html.Button("Close", id="tests-close", className="slds-btn brand"),
+def tests_page() -> html.Div:
+    """Runs the real pytest suite on demand. Results are grouped by what they prove (app/test_runner.py)."""
+    return html.Div(className="page-stack", children=[
+        html.Div(className="component", children=[
+            html.Div(className="component-head", children=html.H2("Is Lead Router really working?", className="component-title")),
+            html.Div(className="component-body tests-intro", children=[
+                html.P(["This button runs our ", html.B("real pytest suite"), ": the same automated tests we run before "
+                        "every change. Each test feeds the program an input where we already know the right answer "
+                        "and checks the program gets it. If any rule broke, a test would turn red here."],
+                       className="mb-2"),
+                html.Button("▶ Run all tests", id="tests-run", className="slds-btn brand"),
+                html.Span("Takes about 20-30 seconds: several tests run the full 50,000-lead file.", className="hint ms-2"),
+            ]),
         ]),
+        dcc.Loading(type="circle", color="#0176D3", children=html.Div(id="tests-body", className="page-stack")),
     ])
 
 
@@ -362,12 +386,14 @@ def layout() -> html.Div:
         global_header(),
         app_nav(),
         page_header(),
-        dcc.Location(id="url", refresh="callback-nav"),  # the address bar: /, /leads or /about
+        dcc.Location(id="url", refresh="callback-nav"),  # the address bar: one address per page
         html.Div(className="canvas", children=[
             html.Div(id="alert-area"),
             empty_state(),
             html.Div(id="page-dashboard", children=canvas()),
             html.Div(id="page-leads", style={"display": "none"}, children=details()),
+            html.Div(id="page-review", style={"display": "none"}, children=review_page()),
+            html.Div(id="page-tests", style={"display": "none"}, children=tests_page()),
             html.Div(id="page-about", style={"display": "none"}, children=about_page()),
         ]),
         dbc.Offcanvas(id="detail", title="Lead detail", placement="end", is_open=False, style={"width": "460px"}),
@@ -376,12 +402,11 @@ def layout() -> html.Div:
         dcc.Store(id="up-reps-store"),
         dcc.Store(id="scroll-done"),  # dummy output for the scroll-to-top callback
         dcc.Store(id="tests-trigger"),  # bumps when the tests should (re)run
-        tests_modal(),
     ])
 
 
 app = Dash(__name__, title="Lead Routing Dashboard", external_stylesheets=[dbc.themes.BOOTSTRAP],
-           suppress_callback_exceptions=True)  # some components live in tabs not rendered yet
+           suppress_callback_exceptions=True)  # some components (assign buttons) are created later
 app.layout = layout
 server = app.server  # for a production server such as gunicorn / waitress
 
@@ -458,7 +483,7 @@ CHART_IDS = ["ch-tiers", "ch-region", "ch-capacity", "ch-fullness"]
     Output("about-data", "style"), Output("as-of", "children"),
     *[Output(f"m-{k}", "children") for k in METRIC_KEYS], *[Output(f"m-{k}-cap", "children") for k in METRIC_KEYS],
     *[Output(c, "figure") for c in CHART_IDS],
-    Output("tab-review", "label"), Output("review-grid", "rowData"), Output("dq-leads", "children"), Output("dq-reps", "children"),
+    Output("review-count", "children"), Output("review-grid", "rowData"), Output("dq-leads", "children"), Output("dq-reps", "children"),
     Input("run-store", "data"),
 )
 def render(_store):
@@ -468,7 +493,7 @@ def render(_store):
         return ({}, {"display": "none"}, {"display": "none"}, {"display": "none"},
                 "No data yet · Viewing as Sales Operations",
                 *["—"] * len(METRIC_KEYS), *[""] * len(METRIC_KEYS), *[blank] * len(CHART_IDS),
-                "Manager Review", [], None, None)
+                "", [], None, None)
 
     m, (results, reps) = r.metrics, frames()
     lq, rq = r.lead_quality, r.rep_quality
@@ -511,12 +536,12 @@ def render(_store):
     ]
 
     review_columns = ["lead_id", "company_name", "priority", "score", "overflow_reason", "region", "language",
-                      "industry", "reason"]  # only what the table shows: keeps the page light
+                      "industry"]  # only what the table shows: keeps the page light
     review_rows = results.loc[results["status"] == "Manager Review", review_columns].to_dict("records")
     return ({"display": "none"}, {}, {}, {}, as_of,
             *[metrics[k][0] for k in METRIC_KEYS], *[metrics[k][1] for k in METRIC_KEYS],
             *figures,
-            f"Manager Review ({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq))
+            f"({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq))
 
 
 def _quality_table(report) -> list:
@@ -545,7 +570,11 @@ def _quality_table(report) -> list:
 # ======================================================================================
 # Callbacks: navigation ("View Report" links, nav bar, global search)
 # ======================================================================================
-@callback(Output("page-dashboard", "style"), Output("page-leads", "style"), Output("page-about", "style"),
+PAGE_IDS = {"/": "page-dashboard", "/leads": "page-leads", "/review": "page-review", "/tests": "page-tests",
+            "/about": "page-about"}
+
+
+@callback(*[Output(page_id, "style") for page_id in PAGE_IDS.values()],
           Output({"type": "nav", "page": ALL}, "className"),
           Output("page-title", "children"), Output("page-eyebrow", "children"),
           Input("url", "pathname"))
@@ -553,9 +582,9 @@ def show_page(pathname):
     """Show the page for the current address and highlight its tab. Unknown addresses show the Dashboard."""
     path = pathname if pathname in PAGES else "/"
     show = lambda page: {} if page == path else {"display": "none"}
-    nav_ids = [o["id"]["page"] for o in ctx.outputs_list[3]]
+    nav_ids = [o["id"]["page"] for o in ctx.outputs_list[len(PAGE_IDS)]]
     label, title = PAGES[path]
-    return (show("/"), show("/leads"), show("/about"),
+    return (*[show(page) for page in PAGE_IDS],
             ["nav-item active" if page == path else "nav-item" for page in nav_ids],
             title, "Dashboard" if path == "/" else label)
 
@@ -567,7 +596,7 @@ def open_tab(clicks):
     if not ctx.triggered_id or not any(clicks):
         return no_update, no_update
     tab = ctx.triggered_id["tab"]
-    return TAB_PAGE.get(tab, "/"), (tab if tab in ("queue", "review", "capacity") else no_update)
+    return TAB_PAGE.get(tab, "/"), (tab if tab in ("queue", "capacity") else no_update)
 
 
 @callback(Output("q-search", "value"), Output("tabs", "active_tab", allow_duplicate=True),
@@ -668,10 +697,9 @@ def capacity_table(_store, region, seniority, sort):
 # Callback: lead detail drawer
 # ======================================================================================
 @callback(Output("detail", "is_open"), Output("detail", "children"), Output("detail", "title"),
-          Input("queue-grid", "selectedRows"), Input("review-grid", "selectedRows"), prevent_initial_call=True)
-def lead_detail(queue_selection, review_selection):
+          Input("queue-grid", "selectedRows"), prevent_initial_call=True)
+def lead_detail(selection):
     """Clicking a row explains the score, the routing decision, and how the raw row was cleaned."""
-    selection = queue_selection if ctx.triggered_id == "queue-grid" else review_selection
     if not selection or STATE.result is None:
         return False, no_update, no_update
     lead_id = selection[0]["lead_id"]
@@ -738,35 +766,235 @@ def _match_table(lead, decision):
 
 
 # ======================================================================================
-# Callbacks: "Run Tests" panel
+# Callbacks: Manager Review page
 # ======================================================================================
-@callback(Output("tests-modal", "is_open"), Output("tests-trigger", "data"),
-          Input("btn-tests", "n_clicks"), Input("tests-again", "n_clicks"), Input("tests-close", "n_clicks"),
+TRAIT_LABEL = {"region": "Region", "language": "Language", "industry": "Industry"}
+
+
+def _waiting_leads() -> list[str]:
+    """Lead IDs still waiting for a manager, most urgent first (routing order)."""
+    if STATE.result is None:
+        return []
+    return [a.lead_id for a in STATE.result.assignments if a.status is AssignmentStatus.MANAGER_REVIEW]
+
+
+@callback(Output("review-panel", "children"),
+          Input("review-grid", "selectedRows"), Input("run-store", "data"))
+def review_panel(selection, _store):
+    """Details of the selected lead (or the most urgent one) + the 3 closest reps who can take it."""
+    waiting = _waiting_leads()
+    if STATE.result is None:
+        return html.P("Run Sample or Run Scale first: leads that need a manager will show up here.", className="hint")
+    if not waiting:
+        return html.Div(className="review-done", children=[
+            html.Div("✓", className="review-done-mark"),
+            html.P("No leads are waiting. Every lead has a rep.", className="mb-0"),
+        ])
+    picked = selection[0]["lead_id"] if selection and selection[0]["lead_id"] in waiting else None
+    lead_id = picked or waiting[0]
+    r = STATE.result
+    lead = next(l for l in r.leads if l.id == lead_id)
+    decision = next(a for a in r.assignments if a.lead_id == lead_id)
+
+    region = lead.region or "Unknown"
+    if lead.alt_regions:
+        region += f" (or {', '.join(lead.alt_regions)})"
+    facts = [
+        ("Region", region), ("Language", lead.language or "Unknown"), ("Industry", lead.industry or "Unknown"),
+        ("Company size", f"{lead.company_size:,} employees" if lead.company_size else "Unknown"),
+        ("Recent activity", lead.recent_activity or "None"), ("VIP referral", "Yes" if lead.vip_referral else "No"),
+    ]
+    lead_traits = {"region": lead.region, "language": lead.language, "industry": lead.industry}
+
+    def trait_chip(candidate, trait):
+        rep_value = getattr(candidate.rep, trait) or "Unknown"
+        if trait in candidate.matched:
+            return html.Span(f"✓ {rep_value}", className="trait-chip yes", title=f"Same {trait} as the lead")
+        if trait in candidate.missed:
+            return html.Span(f"✗ {rep_value}", className="trait-chip no",
+                             title=f"Lead: {lead_traits[trait] or 'unknown'}")
+        return html.Span(f"– {rep_value}", className="trait-chip unk", title=f"The lead's {trait} is unknown")
+
+    def candidate_card(rank, c):
+        rep = c.rep
+        return html.Div(className="cand-card", children=[
+            html.Div(className="cand-head", children=[
+                html.Span(f"#{rank}", className="cand-rank"),
+                html.Div([html.P(rep.name, className="cand-name"),
+                          html.P(f"{rep.id} · {rep.seniority.value}", className="cand-sub")]),
+                html.Span(f"{c.traits} of 3", className=f"cand-score s{c.traits}"),
+            ]),
+            html.Div([trait_chip(c, t) for t in ("region", "language", "industry")], className="cand-traits"),
+            html.Div(className="cand-foot", children=[
+                html.Div(className="cand-load", children=[
+                    html.Div(className="cand-bar", children=html.Div(
+                        className="cand-bar-fill", style={"width": f"{100 * rep.load_ratio:.0f}%"})),
+                    html.Span(f"{rep.current_capacity} of {rep.max_capacity} leads · {rep.available} open",
+                              className="cand-sub"),
+                ]),
+                html.Button(f"Assign to {rep.name.split()[0]}", className="slds-btn brand",
+                            id={"type": "assign-rep", "rep": rep.id}),
+            ]),
+        ])
+
+    choices = rep_choices(lead, r.reps)
+    top = choices[:3]
+    suggestions = ([candidate_card(i, c) for i, c in enumerate(top, start=1)] if top else
+                   [html.P("No rep with open slots is allowed to take this lead"
+                           + (" (Critical leads can't go to Juniors)." if lead.priority.value == "Critical" else ".")
+                           + " Free up capacity first, e.g. raise a rep's Max_Capacity.", className="hint")])
+    picker = html.Div(className="review-any", children=[
+        html.P("Or choose any rep with room", className="review-label"),
+        html.Div(className="review-any-row", children=[
+            dcc.Dropdown(id="review-any", placeholder="Search reps by name, ID, seniority…", clearable=True,
+                         options=[{"label": f"{c.rep.name} ({c.rep.id}) · {c.rep.seniority.value} · "
+                                            f"{c.traits} of 3 traits · {c.rep.available} open",
+                                   "value": c.rep.id} for c in choices],
+                         className="review-any-dd"),
+            html.Button("Assign", id="review-assign-any", className="slds-btn"),
+        ]),
+    ]) if choices else None
+
+    return [
+        html.Div(className="review-lead-head", children=[
+            html.Div([html.P(f"{lead.id} · {lead.company_name}", className="review-lead-name"),
+                      html.P("" if picked else "Showing the most urgent waiting lead. Click any row to switch.",
+                             className="cand-sub")]),
+            html.Div([html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-1"),
+                      html.Span(f"{lead.score} pts", className="score-badge")]),
+        ]),
+        html.Div(className="review-why", children=[
+            html.P("Why it's waiting", className="review-label"),
+            html.P(decision.reason, className="mb-0"),
+        ]),
+        html.Table(className="detail-table w-100 mb-3", children=html.Tbody(
+            [html.Tr([html.Td(k), html.Td(v)]) for k, v in facts])),
+        html.P(f"Closest reps who can take it ({len(choices):,} reps have room and are allowed)",
+               className="review-label"),
+        html.Div(suggestions, className="cand-list"),
+        picker,
+    ]
+
+
+@callback(Output("run-store", "data", allow_duplicate=True), Output("review-msg", "children"),
+          Input({"type": "assign-rep", "rep": ALL}, "n_clicks"), Input("review-assign-any", "n_clicks"),
+          State("review-any", "value"), State("review-grid", "selectedRows"), prevent_initial_call=True)
+def assign_from_review(_card_clicks, _any_click, any_rep, selection):
+    """A manager clicked Assign: give the lead to that rep (same safety rules as automatic routing)."""
+    if not ctx.triggered or not ctx.triggered[0]["value"] or STATE.result is None:
+        return no_update, no_update
+    waiting = _waiting_leads()
+    picked = selection[0]["lead_id"] if selection and selection[0]["lead_id"] in waiting else None
+    lead_id = picked or (waiting[0] if waiting else None)
+    rep_id = ctx.triggered_id["rep"] if isinstance(ctx.triggered_id, dict) else any_rep
+    if lead_id is None:
+        return no_update, no_update
+    if not rep_id:
+        return no_update, dbc.Alert("Choose a rep from the list first.", color="warning", dismissable=True)
+    try:
+        decision = manual_assign(STATE.result, lead_id, rep_id)
+    except ReviewError as error:
+        return no_update, dbc.Alert(str(error), color="danger", dismissable=True)
+    run_id = STATE.set(STATE.result)  # redraws every page with the new numbers
+    left = len(_waiting_leads())
+    return {"run_id": run_id}, dbc.Alert(
+        f"✓ {lead_id} assigned to {decision.rep_name} ({decision.rep_seniority.value}). "
+        f"{left:,} lead{'s' if left != 1 else ''} still waiting.", color="success", dismissable=True)
+
+
+# ======================================================================================
+# Callbacks: Tests page
+# ======================================================================================
+@callback(Output("url", "pathname", allow_duplicate=True), Output("tests-trigger", "data"),
+          Input("btn-tests", "n_clicks"), Input("tests-run", "n_clicks"),
           State("tests-trigger", "data"), prevent_initial_call=True)
-def toggle_tests(_open, _again, _close, trigger):
-    """Open (and start the checks), run again, or close the panel."""
-    if ctx.triggered_id == "tests-close":
-        return False, no_update
-    return True, (trigger or 0) + 1
+def start_tests(_header, _page, trigger):
+    """'✓ Run Tests' in the header opens the Tests page; both buttons start a run."""
+    return ("/tests" if ctx.triggered_id == "btn-tests" else no_update), (trigger or 0) + 1
 
 
-@callback(Output("tests-body", "children"), Input("tests-trigger", "data"), prevent_initial_call=True)
+@callback(Output("tests-body", "children"), Input("tests-trigger", "data"), prevent_initial_call=True,
+          running=[(Output("tests-run", "disabled"), True, False)])
 def run_tests(_trigger):
-    """Run every business scenario check and draw one card per check."""
-    results, seconds = scenarios.run_all()
-    passed = sum(1 for s in results if s.passed and not s.skipped)
-    ran = sum(1 for s in results if not s.skipped)
-    all_ok = passed == ran
-    summary = html.Div(className="tests-summary " + ("ok" if all_ok else "bad"), children=[
-        html.Div("✓" if all_ok else "✗", className="tests-summary-mark"),
+    """Run pytest (in its own process) and the illustrated business scenarios side by side."""
+    started = time.perf_counter()
+    process, report = test_runner.start_suite()
+    with ThreadPoolExecutor(1) as pool:
+        scenario_job = pool.submit(scenarios.run_all)
+        suite = test_runner.finish_suite(process, report, started)
+        scenario_results, _ = scenario_job.result()
+    return _suite_view(suite) + [_scenario_section(scenario_results)]
+
+
+def _suite_view(suite: test_runner.SuiteRun) -> list:
+    if suite.error:
+        return [dbc.Alert(suite.error, color="danger")]
+    ok = suite.failed_cases == 0
+    summary = html.Div(className="tests-summary " + ("ok" if ok else "bad"), children=[
+        html.Div("✓" if ok else "✗", className="tests-summary-mark"),
         html.Div([
-            html.P(f"{passed} of {ran} checks passed", className="tests-summary-title"),
-            html.P(f"Each check runs the whole program (clean → score → assign) on the real 50,000-lead file "
-                   f"or a small made-up case. Took {seconds:.1f} seconds.", className="tests-summary-sub"),
+            html.P(f"{suite.passed_cases:,} of {suite.total_cases:,} test cases passed"
+                   + ("" if ok else f" · {suite.failed_cases} failed"), className="tests-summary-title"),
+            html.P(f"{len(suite.results)} pytest tests (some run several inputs each) · "
+                   f"finished in {suite.seconds:.1f} s · {datetime.now():%I:%M %p}", className="tests-summary-sub"),
         ]),
     ])
-    cards = [dbc.Col(_test_card(s), xs=12, lg=6, className="mb-3") for s in results]
-    return [summary, dbc.Row(cards, className="mt-3")]
+    shown, sections = set(), [summary]
+    for title, intro, entries in test_runner.CATALOG:
+        rows = []
+        for name, plain, proves in entries:
+            result = suite.results.get(name)
+            if result is None:
+                continue
+            shown.add(name)
+            rows.append(_proof_row(plain, proves, result))
+        passed = sum(1 for name, *_ in entries if name in suite.results and suite.results[name].status != "failed")
+        sections.append(html.Div(className="component", children=[
+            html.Div(className="component-head", children=html.H2(
+                [title, html.Span(f"{passed} of {len(rows)} passing", className="proof-count")],
+                className="component-title proof-group-title")),
+            html.Div(className="component-body", children=[html.P(intro, className="hint mb-2") if intro else None,
+                                                           html.Div(rows, className="proof-list")]),
+        ]))
+    others = [r for n, r in sorted(suite.results.items(), key=lambda kv: (kv[1].file, kv[0])) if n not in shown]
+    sections.append(html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2(
+            [f"Every other test ({len(others)})",
+             html.Span(f"{sum(r.status != 'failed' for r in others)} of {len(others)} passing", className="proof-count")],
+            className="component-title proof-group-title")),
+        html.Div(className="component-body", children=html.Details([
+            html.Summary("Show all of them (cleaning, scoring, routing, distribution, explanations…)"),
+            html.Div([_proof_row(r.name.removeprefix("test_").replace("_", " ").capitalize(), "", r) for r in others],
+                     className="proof-list mt-2"),
+        ])),
+    ]))
+    return sections
+
+
+def _proof_row(plain: str, proves: str, result: test_runner.TestResult) -> html.Div:
+    mark = {"passed": "✓", "failed": "✗", "skipped": "–"}[result.status]
+    cases = f" · {result.cases} inputs" if result.cases > 1 else ""
+    return html.Div(className=f"proof-row {result.status}", children=[
+        html.Span(mark, className=f"proof-mark {result.status}"),
+        html.Div([
+            html.P(plain, className="proof-title"),
+            html.P(proves, className="proof-text") if proves else None,
+            *[html.Pre(msg, className="proof-error") for msg in result.messages[:2]],
+            html.P(f"{result.file} · {result.name}{cases} · {result.seconds:.2f} s", className="proof-name"),
+        ]),
+    ])
+
+
+def _scenario_section(results) -> html.Div:
+    """The 8 business scenarios (also part of pytest), each with a small chart and a plain explanation."""
+    return html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2("Business scenarios, with pictures", className="component-title")),
+        html.Div(className="component-body", children=[
+            html.P("The same checks as the \"Rules that must never break\" tests above, shown as a picture of the result.",
+                   className="hint mb-2"),
+            dbc.Row([dbc.Col(_test_card(s), xs=12, lg=6, className="mb-3") for s in results]),
+        ]),
+    ])
 
 
 def _test_card(s: scenarios.Scenario) -> html.Div:

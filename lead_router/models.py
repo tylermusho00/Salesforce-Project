@@ -148,6 +148,7 @@ class Assignment:
     match_level: MatchLevel | None = None
     rep_name: str | None = None
     rep_seniority: Seniority | None = None
+    manual: bool = False                       # True when a manager assigned it from Manager Review
 
 
 @dataclass(slots=True)

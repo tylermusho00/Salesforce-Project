@@ -1,12 +1,14 @@
 # How we know Lead Router works
 
-Lead Router has **168 automated tests** written with **pytest**, the standard testing tool for Python.
+Lead Router has **210 automated test cases** (121 tests) written with **pytest**, the standard testing tool for Python.
 Most of them check small technical details. This page covers the **business scenario tests**
 (`tests/test_business_scenarios.py`): each one checks a promise a sales manager would care about,
 in words anyone can follow.
 
-**See them on the dashboard:** click **✓ Run Tests** in the page header. It runs the same checks
-live and shows one card per test, with a small title, a pass/fail badge, a chart, and three short
+**See them on the dashboard:** open the **Tests** tab (or click **✓ Run Tests** in the header) and press
+**▶ Run all tests**. It runs the real pytest suite in the background (about 25 seconds) and groups the
+results by what they prove: ties, rules that must never break, edge cases and unknown values, Manager
+Review, and scale. Below that, these business scenarios appear as cards with a small chart and three short
 blurbs: why this test, the result, and why it shows the program works. The checks live in
 `lead_router/scenarios.py`, so the website and pytest always run the same code.
 
@@ -159,7 +161,52 @@ still enough to route, and the hopeless case went to a manager with a reason a p
 
 ---
 
-## The other 157 tests
+## Ties: who goes first when scores are equal
+
+`tests/test_ties_and_edge_cases.py`. Leads are ranked by **tier, then score, then their row in the file**.
+Nothing is random, so the same file always gives the same answer.
+
+| Test | What it proves |
+|---|---|
+| Same score → earlier row first | Three High leads with 70 points come out as row 2, 5, 9 |
+| Higher score beats file order | Both High: 80 points goes before 65, even though the 65 came first |
+| Tier always comes first | A Critical lead at row 99 beats a High lead at row 0 |
+| VIP vs. a perfect 100 | Both 100 and Critical, so file order decides: no hidden preference |
+| Last open slot → higher score | Two Critical leads, one Senior slot: 95 points gets it, 90 waits |
+| Exact tie for the last slot | Same tier and score: the earlier row gets the rep |
+| Identical reps take turns | A, B, A, B, starting with the rep listed first |
+| Equal match → emptier rep | The rep with more room gets the next lead |
+| Fairness never beats a better match | A busier 3-of-3 rep beats an idle 2-of-3 rep |
+
+## Edge cases and unknown values
+
+Same file. The rule: never crash, never drop a lead, always explain.
+
+| Test | What it proves |
+|---|---|
+| Company size formats | `1,000`, `5k`, `500-1000` (→ 750), ` 250 ` are read; blank, N/A, text, 0 and negatives become unknown |
+| Only a clear yes is VIP | True/yes/Y/1 are VIP; Unknown, blank and "maybe" are not |
+| A completely blank lead | Kept, scored 25 (Low) from fallback points, sent to review: "Not enough info to match" |
+| "NA" = North America | pandas would erase it as missing; we keep it |
+| Two regions in one cell | First kept, second saved as a backup, and the backup is used if the first has no rep |
+| Unreadable rep level | Treated as Junior, so that rep can never receive a Critical lead |
+| Bad rep capacities | −20 → 20, blank → the level's default, a starting load → reset to 0 |
+| Messy column headers | ` lead id `, `COMPANY NAME`… still work |
+| A lead no rep covers | Waits in Manager Review with "No rep shares a trait" |
+
+## Manager Review: assigning by hand
+
+`tests/test_review.py`. The Manager Review page suggests the 3 closest reps with room and lets a manager assign.
+
+| Test | What it proves |
+|---|---|
+| Most traits first | 3-of-3 before 2-of-3, equal reps in file order, full reps never suggested |
+| No Juniors for Critical | Juniors are never suggested for, or assignable to, a Critical lead |
+| Assigning updates everything | The lead leaves review, the rep's load goes up, every number recounts, the export says "Manager" |
+| No overfilling | A full rep can't be chosen |
+| Only waiting leads | A lead already with a rep can't be reassigned from here |
+
+## The other tests
 
 | File | What it checks |
 |---|---|

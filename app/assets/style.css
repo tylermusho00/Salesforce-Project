@@ -233,3 +233,54 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 .about-quality { padding: 8px 20px 16px; }
 .about-sub { font-size: 16px; font-weight: 700; color: var(--card-title); }
 @media (max-width: 900px) { .about-steps { grid-template-columns: 1fr; } }
+
+/* ---------- Manager Review page ---------- */
+.review-body { padding: 8px 16px 16px; }
+.review-panel { padding: 12px 16px 16px; }
+.review-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-weak); margin: 0 0 6px; }
+.review-lead-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.review-lead-name { font-size: 18px; font-weight: 700; color: var(--card-title); margin: 0; }
+.review-why { background: #FEF1EE; border-left: 4px solid #BA0517; border-radius: 4px; padding: 8px 12px; margin-bottom: 12px; font-size: 14px; }
+.cand-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.cand-card { border: 1px solid #C9C9C9; border-radius: 8px; padding: 10px 12px; background: #fff; }
+.cand-head { display: flex; align-items: center; gap: 10px; }
+.cand-head > div { flex: 1; }
+.cand-rank { font-weight: 700; color: var(--brand); font-size: 16px; }
+.cand-name { font-weight: 700; margin: 0; font-size: 15px; }
+.cand-sub { font-size: 12px; color: var(--text-weak); margin: 0; }
+.cand-score { font-size: 12px; font-weight: 700; border-radius: 12px; padding: 2px 10px; background: #ECEBEA; }
+.cand-score.s3 { background: #CDEFC4; color: #2E844A; }
+.cand-score.s2 { background: #D8EDFF; color: #0B5CAB; }
+.cand-score.s1 { background: #FEF0CD; color: #8C4B02; }
+.cand-traits { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.trait-chip { font-size: 12px; border-radius: 4px; padding: 2px 8px; border: 1px solid transparent; }
+.trait-chip.yes { background: #EBF7E6; color: #2E844A; border-color: #91DB8B; }
+.trait-chip.no { background: #FEF1EE; color: #BA0517; border-color: #FE9B8C; }
+.trait-chip.unk { background: #F3F3F3; color: #706E6B; border-color: #DDDBDA; }
+.cand-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cand-load { flex: 1; }
+.cand-bar { height: 6px; background: #ECEBEA; border-radius: 3px; overflow: hidden; margin-bottom: 3px; max-width: 220px; }
+.cand-bar-fill { height: 100%; background: var(--brand); }
+.review-any-row { display: flex; gap: 8px; align-items: center; }
+.review-any-dd { flex: 1; font-size: 13px; }
+.review-done { text-align: center; padding: 24px 0; }
+.review-done-mark { font-size: 36px; color: #2E844A; }
+
+/* ---------- Tests page ---------- */
+.tests-intro { padding: 12px 20px 16px; }
+.proof-group-title { display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap; }
+.proof-count { font-size: 12px; font-weight: 700; color: #2E844A; background: #EBF7E6; border-radius: 12px; padding: 2px 10px; }
+.proof-list { display: flex; flex-direction: column; }
+.proof-row { display: flex; gap: 12px; padding: 10px 4px; border-top: 1px solid #ECEBEA; }
+.proof-row:first-child { border-top: none; }
+.proof-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #fff; background: #2E844A; }
+.proof-mark.failed { background: #BA0517; }
+.proof-mark.skipped { background: #A0A0A0; }
+.proof-title { font-weight: 700; margin: 0; font-size: 14px; }
+.proof-text { margin: 2px 0 0; font-size: 13px; color: #3E3E3C; }
+.proof-name { margin: 2px 0 0; font-size: 11px; color: var(--text-weak); font-family: Consolas, monospace; }
+.proof-error { margin: 4px 0 0; font-size: 12px; color: #BA0517; white-space: pre-wrap; }
+.component-body > details { padding: 4px 4px 8px; }
+.component-body > details summary { cursor: pointer; color: var(--brand); font-size: 14px; }
+.score-badge { font-size: 12px; font-weight: 700; border: 1px solid #C9C9C9; border-radius: 12px; padding: 2px 8px; color: #181818; }

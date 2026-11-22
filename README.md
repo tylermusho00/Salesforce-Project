@@ -52,17 +52,22 @@ Styled after a Salesforce Lightning dashboard (the "Sales Team Dream Dashboard" 
 Salesforce Admins blog): a global header with search, the app nav bar, a record-style page header with
 the run buttons, and white report components on the blue-gray dashboard canvas.
 
-Three pages, each with its own address:
+Five pages, each with its own address:
 
 | Page | What's on it | The question it answers |
 |---|---|---|
 | **Dashboard** `/` | Leads Assigned · Waiting in Manager Review · Critical Leads to Seniors · Team Capacity Used, then Leads by Priority · Leads by Region · How Busy Each Team Is · How Full Are Our Reps? | A manager's at-a-glance check: did every lead get an owner, and is the team balanced? |
-| **Leads & Reps** `/leads` | Lead Queue · Manager Review · Rep Capacity tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+| **Leads & Reps** `/leads` | Lead Queue · Rep Capacity tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+| **Manager Review** `/review` | Leads waiting for a manager · the selected lead's details · its **3 closest reps with room** (traits ✓/✗, load) · **Assign** buttons and a pick-any-rep list | Who needs a decision, and who's the best person left to take it? |
+| **Tests** `/tests` | Runs the real **pytest** suite live and groups the results: ties, rules that must never break, edge cases & unknown values, Manager Review, scale | Is it really working, or are we just guessing? |
 | **About** `/about` | How it works (Clean → Score → Route) · Perfect Matches · Leads Routed per Second · Data Quality | How good and how fast is it, and what did we clean up? |
 
 Every "View Report" link opens the page and tab with the details; the header search box filters
 the lead queue on the Leads & Reps page. **Demo script (≈90 s):** Run Sample → read the four big
-numbers → Run Scale → click a Critical lead in the queue → open Manager Review → About → Reset.
+numbers → Run Scale → click a Critical lead in the queue → Manager Review: assign a lead → Tests: Run all tests → Reset.
+
+A manager's assignment follows the same safety rules as the router (no Critical lead to a Junior, nobody over
+capacity), updates every number on every page, and shows up in the exports as `assigned_by = Manager`.
 
 ## Folder layout
 
@@ -72,6 +77,7 @@ numbers → Run Scale → click a Critical lead in the queue → open Manager Re
 │   ├── main.py            layout + callbacks
 │   ├── charts.py          every chart (Plotly), Lightning colors
 │   ├── grid_server.py     server-side paging for the 50k-row table
+│   ├── test_runner.py     runs pytest for the Tests page and explains each test
 │   └── assets/            CSS, count-up animation, table cell renderers
 ├── config/rules.yaml      ← ALL business numbers: points, tiers, aliases, capacities, routing order
 ├── data/                  ← the challenge CSVs
@@ -84,6 +90,7 @@ numbers → Run Scale → click a Critical lead in the queue → open Manager Re
 │   ├── distribution.py    how ties between equally qualified reps are broken + fairness math
 │   ├── explain.py         turns every decision and data fix into a plain-English sentence
 │   ├── pipeline.py        STEP 4  runs everything, times it, computes KPIs
+│   ├── review.py          Manager Review: closest reps for a waiting lead, assign by hand
 │   ├── export.py          results → tables / CSV (incl. Salesforce Data Loader file)
 │   └── cli.py             the `leadrouter` command
 ├── tests/                 pytest: unit, property-based (hypothesis), benchmark
@@ -197,7 +204,9 @@ Then run `pytest -q`.
 
 | File | What it proves |
 |---|---|
-| `test_business_scenarios.py` | **10 plain-language promises** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md), and runnable from the dashboard's **✓ Run Tests** button |
+| `test_business_scenarios.py` | **10 plain-language promises** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md) |
+| `test_ties_and_edge_cases.py` | **who goes first on equal scores** (tier → score → file row; last open slot), how equal reps take turns, and edge cases: size formats, unknown VIP, a completely blank lead, "NA" = North America, glued regions, unreadable seniority, bad capacities, messy headers |
+| `test_review.py` | Manager Review: closest reps ranked by traits, no Juniors for Critical, full reps skipped, assigning updates every number, rules can't be broken by hand |
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
 | `test_routing.py` | Junior never gets Critical, Senior before Manager, capacity never exceeded, even split, overflow reasons, nothing dropped |
@@ -205,6 +214,8 @@ Then run `pytest -q`.
 | `test_pipeline.py` | empty file, one lead, zero reps, reset, clear error messages |
 | `test_properties.py` | 150 batches of random garbage never crash the pipeline or break the rules |
 | `test_benchmark.py` | 50,000 leads finish under 10 s |
+
+All 210 test cases (121 tests) can be run from the dashboard's **Tests** page, which shows what each one proves.
 
 ## Pushing this folder to GitHub
 

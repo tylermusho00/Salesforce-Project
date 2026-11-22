@@ -15,7 +15,7 @@ from .models import PipelineResult
 RESULT_COLUMNS = ["queue_rank", "lead_id", "company_name", "priority", "score", "status", "rep_id",
                   "rep_name", "rep_seniority", "region", "language", "industry", "company_size",
                   "recent_activity", "vip_referral", "match_level", "overflow_reason", "reason",
-                  "score_explanation", "imputed_fields", "notes", "data_fixes"]
+                  "score_explanation", "imputed_fields", "notes", "data_fixes", "assigned_by"]
 
 
 def results_frame(result: PipelineResult | None) -> pd.DataFrame:
@@ -49,6 +49,7 @@ def results_frame(result: PipelineResult | None) -> pd.DataFrame:
             "imputed_fields": ", ".join(l.imputed_fields),
             "notes": " | ".join(lead_tags(l, a.match_level)),
             "data_fixes": "; ".join(f"{field}: {before} -> {after}" for field, before, after in lead_fixes(l)),
+            "assigned_by": "Manager" if a.manual else ("Lead Router" if a.rep_id else ""),
         })
     return pd.DataFrame(rows, columns=RESULT_COLUMNS)
 
