@@ -29,6 +29,7 @@ from typing import Any, Iterator
 
 import pandas as pd
 
+from .anomaly import flag_leads, flag_reps
 from .cleaning import (LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED, clean_leads,
                        clean_reps, missing_columns, standardize_columns)
 from .config import dataset_paths, load_rules
@@ -249,6 +250,10 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
     with timed(timings, "route"):
         routed = route_all(leads, reps, strategy, live, min_traits)
 
+    # Machine learning: flag unusual records for a human. Runs after routing and changes nothing in it.
+    with timed(timings, "anomaly"):
+        unusual_leads, unusual_reps = flag_leads(leads), flag_reps(routed.reps)
+
     seconds_so_far = sum(timings.values())
     with timed(timings, "metrics"):
         metrics = compute_metrics(leads, routed.reps, routed.assignments, seconds_so_far)
@@ -261,6 +266,7 @@ def run_pipeline_frames(leads_df: pd.DataFrame, reps_df: pd.DataFrame, dataset: 
         # average fairness while leads were being handed out (not just at the end)
         metrics["fairness_during_run"] = round(sum(timeline) / len(timeline), 4) if timeline else 1.0
         metrics["value_fairness"] = routed.value_fairness
+        metrics["unusual_leads"], metrics["unusual_reps"] = unusual_leads, unusual_reps
     timings["total"] = sum(timings.values())
 
     if not reps:
@@ -314,6 +320,11 @@ class PipelineState:
             self.run_id += 1
             return self.run_id
 
+    def snapshot(self) -> tuple[PipelineResult | None, int]:
+        """Read the result and its revision together."""
+        with self._lock:
+            return self.result, self.run_id
+
     def reset(self) -> None:
         """Forget the results and put every rep's load back to 0."""
         with self._lock:
@@ -322,6 +333,20 @@ class PipelineState:
                     rep.current_capacity = 0
             self.result = None
             self.run_id += 1
+
+    def assign_review(self, lead_id: str, rep_id: str, expected_run_id: int):
+        """Publish a manual decision only against the revision shown to the manager."""
+        from copy import deepcopy
+        from .review import ReviewError, manual_assign
+
+        with self._lock:
+            if self.result is None or self.run_id != expected_run_id:
+                raise ReviewError("The active run changed. Select the lead again before assigning.")
+            updated = deepcopy(self.result)
+            decision = manual_assign(updated, lead_id, rep_id)
+            self.result = updated
+            self.run_id += 1
+            return decision, self.run_id
 
 
 STATE = PipelineState()

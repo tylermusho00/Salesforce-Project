@@ -16,7 +16,7 @@ RESULT_COLUMNS = ["queue_rank", "lead_id", "source_lead_id", "company_name", "pr
                   "source_rep_id", "rep_name", "rep_seniority", "region", "language", "industry", "company_size",
                   "recent_activity", "vip_referral", "match_level", "overflow_reason", "reason",
                   "score_explanation", "imputed_fields", "notes", "data_fixes",
-                  "suggested_action", "suggested_rep"]
+                  "suggested_action", "suggested_rep", "assigned_by", "unusual_record"]
 
 
 def results_frame(result: PipelineResult | None) -> pd.DataFrame:
@@ -57,13 +57,15 @@ def results_frame(result: PipelineResult | None) -> pd.DataFrame:
             # Manager Review only: what to do next and the rep it names (see review.py)
             "suggested_action": a.suggested_action,
             "suggested_rep": a.suggested_rep_id,
+            "assigned_by": "Manager" if a.manual else ("Lead Router" if a.rep_id else ""),
+            "unusual_record": l.anomaly or "",
         })
     return pd.DataFrame(rows, columns=RESULT_COLUMNS)
 
 
 def reps_frame(result: PipelineResult | None) -> pd.DataFrame:
     cols = ["rep_id", "source_rep_id", "name", "seniority", "region", "language", "industry", "load",
-            "max_capacity", "utilization", "available", "data_fixes"]
+            "max_capacity", "utilization", "available", "data_fixes", "unusual_record"]
     if result is None:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame([{
@@ -72,7 +74,7 @@ def reps_frame(result: PipelineResult | None) -> pd.DataFrame:
         "industry": r.industry or "Unknown", "load": r.current_capacity,
         "max_capacity": r.max_capacity,
         "utilization": round(100 * r.current_capacity / r.max_capacity, 1) if r.max_capacity else 0.0,
-        "available": r.available, "data_fixes": "; ".join(rep_fixes(r)),
+        "available": r.available, "data_fixes": "; ".join(rep_fixes(r)), "unusual_record": r.anomaly or "",
     } for r in result.reps], columns=cols)
 
 

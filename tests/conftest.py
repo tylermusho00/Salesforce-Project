@@ -70,6 +70,19 @@ def _clean_state():
     STATE.reset()
 
 
+@pytest.fixture(scope="session")
+def scale_run():
+    """The real 50,000-lead / 1,600-rep files, run ONCE per test session and shared by every test that
+    only reads the result (scenarios, ML). Saves ~10 s compared with each file running it again.
+    Returns (PipelineResult, seconds)."""
+    from lead_router import scenarios
+
+    run = scenarios.full_run()
+    if run is None:
+        pytest.skip("the 50,000-lead challenge file is not in data/")
+    return run
+
+
 @pytest.fixture
 def scale_paths():
     leads_path, reps_path = DATA_DIR / "leads_scale.csv", DATA_DIR / "reps_scale.csv"

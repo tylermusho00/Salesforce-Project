@@ -39,6 +39,8 @@ def compare_capacity(result: PipelineResult, rep_ids: list[str], extra_slots: in
         raise CapacityError("Choose between one and three different representatives.")
     if type(extra_slots) is not int or not 1 <= extra_slots <= 50:
         raise CapacityError("Extra slots must be a whole number from 1 to 50.")
+    if any(a.manual for a in result.assignments):
+        raise CapacityError("This run includes manual assignments. Re-run automatic routing before comparing capacity.")
     known = {r.id: r for r in result.reps}
     if any(rep_id not in known for rep_id in rep_ids):
         raise CapacityError("A selected representative is no longer in this run. Choose again.")

@@ -1,12 +1,14 @@
 # How we know Lead Router works
 
-Lead Router has **293 automated tests** written with **pytest**, the standard testing tool for Python.
+Lead Router has **353 automated tests** written with **pytest**, the standard testing tool for Python.
 Most of them check small technical details. This page covers the **business scenario tests**
 (`tests/test_business_scenarios.py`): each one checks a promise a sales manager would care about,
 in words anyone can follow.
 
-**See them on the dashboard:** click **✓ Run Tests** in the page header. It runs the same checks
-live and shows one card per test, with a small title, a pass/fail badge, a chart, and three short
+**See them on the dashboard:** open the **Tests** tab (or click **Run tests** in the header) and press
+**▶ Run all tests**. It runs the real pytest suite in the background (about 15 seconds) and groups the
+results by what they prove: ties, rules that must never break, edge cases and unknown values, Manager
+Review, and scale. Below that, these business scenarios appear as cards with a small chart and three short
 blurbs: why this test, the result, and why it shows the program works. The checks live in
 `lead_router/scenarios.py`, so the website and pytest always run the same code. The panel uses
 Best available matching on fixed scenarios and leaves the current dashboard run unchanged.

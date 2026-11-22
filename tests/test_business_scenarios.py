@@ -21,13 +21,10 @@ def report(scenario: scenarios.Scenario) -> None:
     print(f"\n    RESULT: {'; '.join(scenario.result)}")
 
 
-@pytest.fixture(scope="module")
-def full():
-    """The real 50,000-lead / 1,600-rep challenge files, run once and shared by several tests."""
-    run = scenarios.full_run()
-    if run is None:
-        pytest.skip("the 50,000-lead challenge file is not in data/")
-    return run
+@pytest.fixture
+def full(scale_run):
+    """The real 50,000-lead / 1,600-rep challenge files (run once per session, see conftest.scale_run)."""
+    return scale_run
 
 
 def test_1_no_lead_is_ever_lost(full):
@@ -106,9 +103,9 @@ def test_8_missing_information_never_crashes_or_drops_a_lead():
     assert s.numbers["junk_status"] is AssignmentStatus.MANAGER_REVIEW
 
 
-def test_run_all_matches_what_the_dashboard_shows():
-    """The dashboard's Run Tests button calls run_all(): every scenario must pass there too."""
-    results, seconds = scenarios.run_all()
+def test_run_all_matches_what_the_dashboard_shows(scale_run):
+    """The dashboard's Tests page calls run_all(): every scenario must pass there too."""
+    results, seconds = scenarios.run_all(full=scale_run)
     print(f"\n    RESULT: {sum(s.passed for s in results)} of {len(results)} scenarios passed in {seconds:.1f} s.")
     assert [s.number for s in results] == list(range(1, 9))
     assert all(s.passed for s in results)

@@ -2,9 +2,10 @@
 # Engine
 pandas>=2.2
 rapidfuzz>=3.9
+scikit-learn>=1.5    # machine learning: unusual-record detection (lead_router/anomaly.py)
 pyyaml>=6.0
 # Dashboard (app/)
-dash>=2.17
+dash>=3.1
 dash-ag-grid>=31.2
 dash-bootstrap-components>=1.6
 plotly>=5.22

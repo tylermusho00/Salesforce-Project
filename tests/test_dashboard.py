@@ -202,14 +202,14 @@ def test_review_grid_is_paged_on_the_server_with_the_chip_in_the_filter_model():
 # ---------------------------------------------------------------- lead queue: VIP unknown
 def test_vip_unknown_status_option_filters_the_queue():
     show(sample())
-    model = dashboard.external_filters({"run_id": STATE.run_id}, "", "all", "all", dashboard.VIP_UNKNOWN, {})
+    model = dashboard.external_filters({"run_id": STATE.run_id}, "", "all", "all", dashboard.VIP_UNKNOWN, "all", {})
     assert "status" not in model and model["_flag"]["filter"] == dashboard.VIP_UNKNOWN
     results, _ = dashboard.frames()
     page = dashboard.rows_for_request(results, {"startRow": 0, "endRow": 500, "filterModel": model})
     assert page["rowCount"] == STATE.result.metrics["vip_unknown"] > 0
     assert all(VIP_UNKNOWN_TAG in row["notes"] for row in page["rowData"])
     assert "_flag" not in page["rowData"][0]
-    model = dashboard.external_filters({"run_id": STATE.run_id}, "", "all", "all", "Assigned", model)
+    model = dashboard.external_filters({"run_id": STATE.run_id}, "", "all", "all", "Assigned", "all", model)
     assert "_flag" not in model and model["status"]["filter"] == "Assigned"
 
 
@@ -277,17 +277,22 @@ def test_assigned_drawer_retains_rep_and_trait_evidence_with_short_explanation()
     assert "of" in text and "leads" in text
 
 
-def test_business_tests_preserve_active_strict_run():
+def test_business_tests_preserve_active_strict_run(monkeypatch):
+    from app.test_runner import SuiteRun, TestResult
+    monkeypatch.setattr(dashboard.test_runner, "start_suite", lambda: (None, None))
+    monkeypatch.setattr(dashboard.test_runner, "finish_suite", lambda *args: SuiteRun(
+        {"example": TestResult("example", "test_example.py", cases=1)}, 0.01))
     result = show(sample(min_traits=3))
     run_id = STATE.run_id
     panel = dashboard.run_tests(1)
-    assert "8 of 8 checks passed" in text_of(panel)
+    assert "1 of 1 test cases passed" in text_of(panel)
+    assert "Business scenarios" in text_of(panel)
     assert STATE.result is result and STATE.run_id == run_id
     assert "Strict" in dashboard.render()["as_of"]
 
 
 # Page navigation must preserve the shared run and all local evidence widgets.
-def test_three_page_layout_keeps_every_render_target_once():
+def test_five_page_layout_keeps_every_render_target_once():
     import json
     from collections import Counter
 
@@ -307,25 +312,27 @@ def test_three_page_layout_keeps_every_render_target_once():
 
 
 @pytest.mark.parametrize("path,expected", [("/", "/"), ("/leads", "/leads"),
-                                           ("/about", "/about"), ("/missing", "/")])
+                                           ("/about", "/about"), ("/review", "/review"),
+                                           ("/tests", "/tests"), ("/missing", "/")])
 def test_page_navigation_preserves_active_strict_run(path, expected):
     result = show(sample(min_traits=3))
     run_id = STATE.run_id
 
     def call():
-        context_value.set(AttributeDict(outputs_list=[None, None, None,
+        context_value.set(AttributeDict(outputs_list=[None] * len(dashboard.PAGES) + [
             [{"id": {"page": page}} for page in dashboard.PAGES]]))
         return dashboard.show_page(path)
 
     out = copy_context().run(call)
-    for style, page in zip(out[:3], dashboard.PAGES):
+    count = len(dashboard.PAGES)
+    for style, page in zip(out[:count], dashboard.PAGES):
         assert style == ({} if page == expected else {"display": "none"})
-    assert out[3] == ["nav-item active" if page == expected else "nav-item" for page in dashboard.PAGES]
-    assert out[4] == dashboard.PAGES[expected][1]
+    assert out[count] == ["nav-item active" if page == expected else "nav-item" for page in dashboard.PAGES]
+    assert out[count + 1] == dashboard.PAGES[expected][1]
     assert STATE.result is result and STATE.run_id == run_id
 
 
-@pytest.mark.parametrize("tab,page", [("queue", "/leads"), ("review", "/leads"),
+@pytest.mark.parametrize("tab,page", [("queue", "/leads"), ("review", "/review"),
                                       ("capacity", "/leads"), ("quality", "/about")])
 def test_report_links_open_the_page_with_the_requested_evidence(tab, page):
     import json

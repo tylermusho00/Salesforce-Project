@@ -58,17 +58,19 @@ Styled after a Salesforce Lightning dashboard (the "Sales Team Dream Dashboard" 
 Salesforce Admins blog): a global header with search, the app nav bar, a record-style page header with
 the run buttons, and white report components on the blue-gray dashboard canvas.
 
-Three pages share the same run, matching mode, trace drawer, export and Run Tests controls:
+Five pages share the same run, matching mode, trace drawer, export and Run tests controls:
 
 | Page | Contents |
 |---|---|
 | **Dashboard** `/` | Assigned / Review / Critical Waiting / Critical-to-Senior / Capacity KPIs; tier-vs-reference, region and capacity charts |
-| **Leads & Reps** `/leads` | Paged lead queue (VIP-unknown filter), Manager Review suggestions and Critical-first filters, rep capacity tables |
+| **Leads & Reps** `/leads` | Paged lead queue (VIP-unknown filter), rep capacity tables and capacity what-if simulator |
+| **Manager Review** `/review` | Paged review queue, reserved suggestions, closest reps and safe manual assignments |
+| **Tests** `/tests` | Real pytest suite and illustrated business scenarios |
 | **About** `/about` | Clean → Score → Route blueprint; fairness, Perfect Matches, speed and values fixed; Rules Check and stage timings; routing funnel, destinations, review charts; full raw-value audit |
 
 Every View Report link opens the relevant page and tab; header search opens the filtered lead queue.
 **Demo:** Run Scale → inspect Dashboard → About: Rules Check and timings → Trace a messy lead →
-Leads & Reps: Manager Review suggestions → Strict and re-run → Reset and repeat.
+Manager Review suggestions → Strict and re-run → Reset and repeat.
 
 ## Folder layout
 
@@ -78,6 +80,7 @@ Leads & Reps: Manager Review suggestions → Strict and re-run → Reset and rep
 │   ├── main.py            layout + callbacks
 │   ├── charts.py          every chart (Plotly), Lightning colors
 │   ├── grid_server.py     server-side paging for the 50k-row table
+│   ├── test_runner.py     runs pytest for the Tests page and explains each test
 │   └── assets/            CSS, count-up animation, table cell renderers
 ├── config/rules.yaml      ← ALL business numbers: points, tiers, aliases, capacities, routing order
 ├── data/                  ← the challenge CSVs
@@ -90,6 +93,8 @@ Leads & Reps: Manager Review suggestions → Strict and re-run → Reset and rep
 │   ├── distribution.py    how ties between equally qualified reps are broken + fairness math
 │   ├── explain.py         turns every decision and data fix into a plain-English sentence
 │   ├── pipeline.py        STEP 4  runs everything, times it, computes KPIs
+│   ├── review.py          Manager Review: closest reps for a waiting lead, assign by hand
+│   ├── anomaly.py         machine learning: flags unusual leads/reps (Isolation Forest), never changes a route
 │   ├── export.py          results → tables / CSV (incl. Salesforce Data Loader file)
 │   └── cli.py             the `leadrouter` command
 ├── tests/                 pytest: unit, property-based (hypothesis), benchmark
@@ -98,6 +103,27 @@ Leads & Reps: Manager Review suggestions → Strict and re-run → Reset and rep
 ```
 
 Start reading at `pipeline.py` (the big picture), then `routing.py` (the interesting part).
+
+## Machine learning: unusual-record detection
+
+`lead_router/anomaly.py` uses scikit-learn's **Isolation Forest**, an unsupervised model (it needs no
+"right answers" to learn from). It builds random trees that keep splitting the data; ordinary rows take
+many splits to isolate, odd rows only a few. The rows isolated fastest are flagged, each with a
+plain-English reason (the feature furthest from normal):
+
+| Looks at | Example flag |
+|---|---|
+| Lead company size (log scale), number of blank fields, number of values that needed cleaning | "Company size of 10,000,000,000 employees is far above normal (typical: 629). Check it's not a typo." |
+| Rep max capacity vs. others of the same seniority, number of values fixed | "Max capacity of 10 is much higher than a typical Manager (7)." |
+
+On the 50,000-lead file it flags 291 leads (0.6%) and 40 reps in about 0.9 s, including all 73 companies
+claiming 10 billion employees. **It never changes a score, priority or route**: it only adds a note
+(About page, lead detail panel, Manager Review panel, and the `unusual_record` export column).
+`test_ml_never_changes_a_route` runs the 50k file with the model on and off and checks every assignment is identical.
+
+Why not a model that predicts which leads will close? The data has no won/lost outcomes, so it could only
+learn our own scoring rules back. With Salesforce closed-deal history, that is the natural next step,
+behind the same rules.
 
 ## The algorithm in one page
 
@@ -204,11 +230,11 @@ Then run `pytest -q`.
 
 ## Tests
 
-The current suite has **293 passing tests**. See [UI verification](docs/UI_VERIFICATION.md) for the latest browser checks and [integration validation](docs/INTEGRATION_VALIDATION.md) for the earlier merge comparison.
+The current suite has **353 passing tests**. See [submission verification](docs/SUBMISSION_VERIFICATION.md) and [UI verification](docs/UI_VERIFICATION.md) for the latest browser checks and [integration validation](docs/INTEGRATION_VALIDATION.md) for the earlier merge comparison.
 
 | File | What it proves |
 |---|---|
-| `test_business_scenarios.py` | **8 scenario cards / 11 pytest checks** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md), and runnable from the dashboard's **✓ Run Tests** button |
+| `test_business_scenarios.py` | **8 scenario cards / 11 pytest checks** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md), and runnable from the dashboard's **Run tests** button |
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
 | `test_routing.py` | Junior never gets Critical, Senior before Manager, capacity never exceeded, even split, overflow reasons, nothing dropped |
@@ -220,6 +246,8 @@ The current suite has **293 passing tests**. See [UI verification](docs/UI_VERIF
 | `test_evidence.py` | strict mode, honest labels, VIP-unknown flag, value audit, every row exactly once (incl. ID collisions), same fingerprint after reset |
 | `test_performance.py` | the optimised router makes exactly the same choices as a slow reference router |
 | `test_dashboard.py` | dashboard callbacks: proof panel, strict toggle, review suggestions, trace-a-lead picker |
+
+All 353 test cases can be run from the dashboard's **Tests** page, which shows what each one proves.
 
 ## Pushing this folder to GitHub
 

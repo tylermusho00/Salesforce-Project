@@ -26,7 +26,8 @@ updated. A no-change baseline replay must match saved placements before scenario
 Currently configured routing rules are used; changed baseline behavior or an in-flight rules
 change requires a fresh main run. This is not a historical rules snapshot.
 
-Changing reps or extra slots marks the preview stale until compared again.
+A manually assigned run must be routed automatically again before capacity comparisons; manual
+overrides are not silently replayed as automatic decisions. Changing reps or extra slots marks the preview stale until compared again.
 New runs and Reset hide old comparison results and clear selected reps. A run replaced during
 calculation rejects the old comparison. The UI uses the application's existing shared in-memory
 run model; this feature does not introduce per-user server sessions.
@@ -48,4 +49,4 @@ run model; this feature does not introduce per-user server sessions.
 
 The simulator lives in `lead_router/capacity.py` and `app/capacity_simulator.py`, with integration
 in `app/main.py`. See [UI verification](UI_VERIFICATION.md) for the subsequent interface polish,
-full click-through coverage and verification limits. Work remains uncommitted.
+full click-through coverage and verification limits. See [submission verification](SUBMISSION_VERIFICATION.md) for the latest integration checks.

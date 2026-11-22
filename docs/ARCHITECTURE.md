@@ -98,7 +98,7 @@ Run `pytest tests/test_benchmark.py --benchmark-only` to measure on your machine
 
 ## Combined-version validation (2026-11-21)
 
-The combined suite has **293 passing tests**, including the business scenarios and dashboard
+The combined suite has **353 passing tests**, including the business scenarios and dashboard
 integration regressions. Routing decisions, cleaned data, reports and metrics match the pre-merge
 version for sample and scale; explanation wording is intentionally shorter. See
 [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). The earlier ~1.3 s timing above is historical;

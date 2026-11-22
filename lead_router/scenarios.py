@@ -288,10 +288,11 @@ def missing_information() -> Scenario:
 
 
 # ======================================================================================
-def run_all() -> tuple[list[Scenario], float]:
-    """Run every scenario. Returns (scenarios in order, seconds taken)."""
+def run_all(full: tuple[PipelineResult, float] | None = None) -> tuple[list[Scenario], float]:
+    """Run every scenario. Returns (scenarios in order, seconds taken).
+    `full` = an existing full_run() result to reuse (the test suite shares one to save time)."""
     start = time.perf_counter()
-    full = full_run()
+    full = full if full is not None else full_run()
     scenarios = [no_lead_lost(full), urgent_never_to_juniors(full), nobody_overloaded(full), vip_jumps_the_line(),
                  messy_spellings(), fair_share(), fast_upload(full), missing_information()]
     return scenarios, time.perf_counter() - start

@@ -23,6 +23,9 @@ summary { cursor: pointer; }
 .about-step-title { font-weight: 500; }
 .test-card { border-color: var(--border); border-radius: 6px; }
 .test-card details { margin-top: 4px; }
+.proof-row > div { min-width: 0; }
+.proof-name, .proof-error { overflow-wrap: anywhere; }
+.review-any-dd { min-width: 0; }
 .test-card details .test-blurb:first-of-type { margin-top: 12px; }
 .test-blurb { border-left: 0; padding-left: 0; }
 .test-blurb-label { text-transform: none; letter-spacing: normal; font-weight: 500; color: var(--text-weak); }

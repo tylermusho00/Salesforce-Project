@@ -55,5 +55,5 @@ filter-operator permutation, browser, device or assistive-technology combination
   metric and tier-chart check: **3.561 s**. These are local observations, not an SLA or percentile.
 
 Hosted Linux/Python 3.12–3.13 CI has not been executed in this session. The existing shared
-in-memory run model remains; the simulator does not add per-user isolation. Changes are local
-and have not been committed or pushed.
+in-memory run model remains; the simulator does not add per-user isolation. This records the pre-merge UI pass. See [submission verification](SUBMISSION_VERIFICATION.md)
+for the subsequent GitHub integration and current shipping evidence.
