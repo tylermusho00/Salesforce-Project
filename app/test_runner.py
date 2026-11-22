@@ -130,7 +130,7 @@ CATALOG: list[tuple[str, str, list[tuple[str, str, str]]]] = [
         ("test_7_fifty_thousand_leads_in_seconds", "50,000 leads in seconds",
          "Clean, score and route the full file."),
         ("test_scale_dataset_under_target", "Benchmark: under 10 seconds",
-         "pytest-benchmark times 3 full runs."),
+         "pytest-benchmark times a full run (set BENCH_ROUNDS=3 for an average of 3)."),
     ]),
 ]
 

@@ -6,7 +6,7 @@ Most of them check small technical details. This page covers the **business scen
 in words anyone can follow.
 
 **See them on the dashboard:** open the **Tests** tab (or click **✓ Run Tests** in the header) and press
-**▶ Run all tests**. It runs the real pytest suite in the background (about 25 seconds) and groups the
+**▶ Run all tests**. It runs the real pytest suite in the background (about 15 seconds) and groups the
 results by what they prove: ties, rules that must never break, edge cases and unknown values, Manager
 Review, and scale. Below that, these business scenarios appear as cards with a small chart and three short
 blurbs: why this test, the result, and why it shows the program works. The checks live in

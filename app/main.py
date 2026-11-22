@@ -412,7 +412,7 @@ def tests_page() -> html.Div:
                         "and checks the program gets it. If any rule broke, a test would turn red here."],
                        className="mb-2"),
                 html.Button("▶ Run all tests", id="tests-run", className="slds-btn brand"),
-                html.Span("Takes about 20-30 seconds: several tests run the full 50,000-lead file.", className="hint ms-2"),
+                html.Span("Takes about 15 seconds: several tests run the full 50,000-lead file.", className="hint ms-2"),
             ]),
         ]),
         dcc.Loading(type="circle", color="#0176D3", children=html.Div(id="tests-body", className="page-stack")),
@@ -988,6 +988,17 @@ def start_tests(_header, _page, trigger):
     return ("/tests" if ctx.triggered_id == "btn-tests" else no_update), (trigger or 0) + 1
 
 
+_SCALE_RUN: dict[str, Any] = {}
+
+
+def _scale_run_for_cards():
+    """The 50k run behind the picture cards, done once and kept in memory: re-clicking Run all tests
+    then only waits for pytest. (pytest itself always does fresh runs.)"""
+    if "run" not in _SCALE_RUN:
+        _SCALE_RUN["run"] = scenarios.full_run()
+    return _SCALE_RUN["run"]
+
+
 @callback(Output("tests-body", "children"), Input("tests-trigger", "data"), prevent_initial_call=True,
           running=[(Output("tests-run", "disabled"), True, False)])
 def run_tests(_trigger):
@@ -995,7 +1006,7 @@ def run_tests(_trigger):
     started = time.perf_counter()
     process, report = test_runner.start_suite()
     with ThreadPoolExecutor(1) as pool:
-        scenario_job = pool.submit(scenarios.run_all)
+        scenario_job = pool.submit(lambda: scenarios.run_all(full=_scale_run_for_cards()))
         suite = test_runner.finish_suite(process, report, started)
         scenario_results, _ = scenario_job.result()
     return _suite_view(suite) + [_scenario_section(scenario_results)]

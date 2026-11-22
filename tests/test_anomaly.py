@@ -43,9 +43,9 @@ def test_same_data_same_flags():
     assert [l.anomaly for l in first] == [l.anomaly for l in second]
 
 
-@pytest.fixture(scope="module")
-def scale():
-    return run_dataset("scale")
+@pytest.fixture
+def scale(scale_run):
+    return scale_run[0]   # the shared 50k run (conftest.scale_run)
 
 
 def test_ml_never_changes_a_route(scale, monkeypatch):
