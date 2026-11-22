@@ -52,18 +52,17 @@ Styled after a Salesforce Lightning dashboard (the "Sales Team Dream Dashboard" 
 Salesforce Admins blog): a global header with search, the app nav bar, a record-style page header with
 the run buttons, and white report components on the blue-gray dashboard canvas.
 
-| Row | Components | The question it answers |
-|---|---|---|
-| 1 | Leads by Priority · From Upload to Rep · Leads Assigned / Waiting in Manager Review | How many leads, how urgent, and how many found an owner? |
-| 2 | Leads by Region · Who Got the Leads (by Priority) · Assigned vs. Manager Review | Where is the work, and who got it? |
-| 3 | Critical → Senior % · Perfect Matches · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
-| 4 | How Busy Each Team Is · How Full Are Our Reps? | Is the team balanced? Are Managers held in reserve? |
-| Details | Lead Queue · Manager Review · Rep Capacity · Data Quality tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+Three pages, each with its own address:
 
-Every "View Report" link and the nav bar jump to the matching detail tab; the header search box
-filters the lead queue. **Demo script (≈90 s):** Run Sample → point at the funnel narrowing at
-"Skill match found" (only 10 reps) → Run Scale → read row 3 aloud → click a Critical lead in the
-queue → open Manager Review → Reset.
+| Page | What's on it | The question it answers |
+|---|---|---|
+| **Dashboard** `/` | Leads Assigned · Waiting in Manager Review · Critical Leads to Seniors · Team Capacity Used, then Leads by Priority · Leads by Region · How Busy Each Team Is · How Full Are Our Reps? | A manager's at-a-glance check: did every lead get an owner, and is the team balanced? |
+| **Leads & Reps** `/leads` | Lead Queue · Manager Review · Rep Capacity tabs | Drill down: search, filter, group, click a lead for its score breakdown |
+| **About** `/about` | How it works (Clean → Score → Route) · Perfect Matches · Leads Routed per Second · Data Quality | How good and how fast is it, and what did we clean up? |
+
+Every "View Report" link opens the page and tab with the details; the header search box filters
+the lead queue on the Leads & Reps page. **Demo script (≈90 s):** Run Sample → read the four big
+numbers → Run Scale → click a Critical lead in the queue → open Manager Review → About → Reset.
 
 ## Folder layout
 

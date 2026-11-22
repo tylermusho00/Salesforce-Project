@@ -220,3 +220,16 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 .pair-after.bad { background: #FEF1EE; border-color: #F4B8A8; }
 .pair-before.label { font-family: inherit; background: #F3F3F3; border-color: #C9C9C9; }
 .test-blurb-list { font-size: 14px; line-height: 1.45; color: var(--text); margin: 0; padding-left: 18px; }
+
+/* ---------- About page ---------- */
+.page-stack { display: flex; flex-direction: column; gap: var(--gap); }
+.about-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 16px 20px 4px; }
+.about-step { display: flex; gap: 14px; align-items: flex-start; }
+.about-step-n { width: 40px; height: 40px; border-radius: 50%; background: var(--brand); color: #fff; font-weight: 700;
+  font-size: 18px; display: flex; align-items: center; justify-content: center; flex: none; margin: 0; }
+.about-step-title { font-size: 18px; font-weight: 700; color: var(--card-title); margin: 0 0 4px; }
+.about-step-text { font-size: 14px; line-height: 1.45; color: var(--text-weak); margin: 0; }
+.about-proof { padding: 6px 20px 16px; margin: 0; text-align: center; }
+.about-quality { padding: 8px 20px 16px; }
+.about-sub { font-size: 16px; font-weight: 700; color: var(--card-title); }
+@media (max-width: 900px) { .about-steps { grid-template-columns: 1fr; } }

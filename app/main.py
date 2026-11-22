@@ -3,16 +3,13 @@ Lead Router dashboard: a Salesforce Lightning-style "dream dashboard" for the ro
 
 Run (from the repository root):   python -m app.main   ->   http://127.0.0.1:8050
 
-Layout, top to bottom (mirrors a Lightning dashboard page):
-    global header   logo, search (jumps to the lead queue), icons
-    app nav bar     Lead Router app with tabs; "Dashboards" is active
-    page header     title, description, "As of ...", Run Sample / Run Scale / Reset, upload, export
-    canvas          white components on a blue-gray background:
-                      row 1  Leads by Priority | From Upload to Rep | Leads Assigned + Manager Review
-                      row 2  Leads by Region | Who Got the Leads | Assigned vs. Manager Review
-                      row 3  four big numbers: Critical→Senior, speed, utilization, values auto-fixed
-                      row 4  How Busy Each Team Is | How Full Are Our Reps?
-    details         Lightning tabs: Lead Queue, Manager Review, Rep Capacity, Data Quality
+Three pages, each with its own address (the nav bar switches pages; nothing scrolls):
+    /         Dashboard      the at-a-glance view: 4 big numbers + 4 charts
+    /leads    Leads & Reps   lead queue, Manager Review and rep capacity tables
+    /about    About          match quality, speed, how it works, data quality
+
+Every page shares the same top: global header (logo, search), the nav bar, and the page header
+(title, "As of ...", Run Sample / Run Scale / Reset, upload, export, Run Tests).
 
 How Dash works, in one paragraph: `layout()` builds the page once. Each `@callback` is a
 Python function that Dash runs when one of its Inputs changes (a click, a dropdown), and its
@@ -46,6 +43,15 @@ from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, ru
 TIERS = charts.TIERS
 REGIONS = ["North America", "Europe", "Asia-Pacific", "Unknown"]
 
+# address -> (nav label, page title)
+PAGES = {
+    "/": ("Dashboard", "Lead Routing Dashboard"),
+    "/leads": ("Leads & Reps", "Leads & Reps"),
+    "/about": ("About", "About Lead Router"),
+}
+# which page each detail tab lives on
+TAB_PAGE = {"queue": "/leads", "review": "/leads", "capacity": "/leads", "about": "/about"}
+
 # ======================================================================================
 # Result tables, built once per run and cached (keyed by STATE.run_id)
 # ======================================================================================
@@ -68,21 +74,20 @@ def frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 # Layout building blocks
 # ======================================================================================
 def report_link(text: str, tab: str, key: str) -> html.A:
-    """A link that opens one of the detail tabs and scrolls to it (like 'View Report')."""
-    return html.A(text, href="#details", id={"type": "open-tab", "tab": tab, "key": key})
+    """A link that opens the page and tab with the details behind a number (like 'View Report')."""
+    return html.A(text, id={"type": "open-tab", "tab": tab, "key": key})
 
 
-def component(title: str, body, tab: str, report: str, key: str) -> html.Div:
-    """One dashboard component: title + expand icon, body, 'View Report' footer."""
-    return html.Div(className="component", children=[
-        html.Div(className="component-head", children=[
-            html.H2(title, className="component-title"),
-            html.A("⤢", href="#details", className="component-expand", title="Open details",
-                   id={"type": "open-tab", "tab": tab, "key": f"{key}-x"}),
-        ]),
-        html.Div(body, className="component-body"),
-        html.Div(report_link(f"View Report ({report})", tab, key), className="component-foot"),
-    ])
+def component(title: str, body, tab: str | None, report: str | None, key: str) -> html.Div:
+    """One dashboard component: title (+ expand icon), body, and a 'View Report' footer when it has one."""
+    head = [html.H2(title, className="component-title")]
+    if tab:
+        head.append(html.A("⤢", className="component-expand", title="Open details",
+                           id={"type": "open-tab", "tab": tab, "key": f"{key}-x"}))
+    children = [html.Div(className="component-head", children=head), html.Div(body, className="component-body")]
+    if tab and report:
+        children.append(html.Div(report_link(f"View Report ({report})", tab, key), className="component-foot"))
+    return html.Div(className="component", children=children)
 
 
 def chart(graph_id: str, height: int = 270) -> dcc.Graph:
@@ -92,7 +97,7 @@ def chart(graph_id: str, height: int = 270) -> dcc.Graph:
                      responsive=True, style={"height": f"{height}px", "width": "100%"})
 
 
-def metric(key: str, title: str, tab: str, report: str, small: bool = False) -> html.Div:
+def metric(key: str, title: str, tab: str | None, report: str | None, small: bool = False) -> html.Div:
     body = html.Div(className="metric-body", children=[
         html.Div("—", id=f"m-{key}", className="metric-value" + (" small" if small else "")),
         html.Div("", id=f"m-{key}-cap", className="metric-caption"),
@@ -111,16 +116,10 @@ def global_header() -> html.Div:
 
 
 def app_nav() -> html.Div:
-    """Every nav item does something: opens a detail tab and scrolls to it, or back to the top."""
-    def item(label: str, tab: str | None = None, active: bool = False):
-        if tab:
-            return html.A(label, href="#details", className="nav-item",
-                          id={"type": "open-tab", "tab": tab, "key": f"nav-{label}"})
-        return html.A(label, href="#top", className="nav-item" + (" active" if active else ""))
-    return html.Div(className="app-nav", children=[
-        html.Div("Lead Router", className="app-name"),
-        item("Home"), item("Leads", "queue"), item("Reps", "capacity"),
-        item("Dashboards", active=True), item("Manager Review", "review"), item("Data Quality", "quality"),
+    """Three tabs, three pages. dcc.Link changes the address without reloading the page."""
+    return html.Div(className="app-nav", children=[html.Div("Lead Router", className="app-name")] + [
+        dcc.Link(label, href=path, className="nav-item", id={"type": "nav", "page": path})
+        for path, (label, _) in PAGES.items()
     ])
 
 
@@ -134,8 +133,8 @@ def page_header() -> html.Div:
     return html.Div(className="page-header", id="top", children=[
         html.Div(DASHBOARD_ICON, className="page-icon"),
         html.Div(className="page-titles", children=[
-            html.Div("Dashboard", className="page-eyebrow"),
-            html.H1("Lead Routing Dashboard", className="page-title"),
+            html.Div("Dashboard", id="page-eyebrow", className="page-eyebrow"),
+            html.H1("Lead Routing Dashboard", id="page-title", className="page-title"),
             dcc.Loading(type="dot", color="#0176D3", children=html.Div(
                 id="as-of", className="page-meta", children="No data yet · Viewing as Sales Operations")),
         ]),
@@ -171,31 +170,19 @@ def empty_state() -> html.Div:
 
 
 def canvas() -> html.Div:
-    # All components sit in ONE grid row, so the gap between boxes is the same everywhere,
-    # side to side and top to bottom (set by --gap in style.css).
+    """The Dashboard page: four numbers a manager checks first, then four charts.
+    All boxes sit in ONE grid row, so the gap between them is the same everywhere (--gap in style.css)."""
     col = lambda child, lg, md=12: dbc.Col(child, xs=12, md=md, lg=lg)
     return html.Div(id="canvas", style={"display": "none"}, children=dbc.Row(className="canvas-grid", children=[
-        # Row 1
-        col(component("Leads by Priority", chart("ch-tiers"), "queue", "Prioritized Lead Queue", "tiers"), 5),
-        col(component("From Upload to Rep", chart("ch-funnel"), "queue", "Prioritized Lead Queue", "funnel"), 4, 6),
-        col(html.Div(className="metric-stack", children=[
-            metric("assigned", "Leads Assigned to Reps", "queue", "Prioritized Lead Queue", small=True),
-            metric("review", "Waiting in Manager Review", "review", "Manager Review", small=True),
-        ]), 3, 6),
-        # Row 2
-        col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
-        col(component("Who Got the Leads (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
-        col(component("Assigned vs. Manager Review", chart("ch-split"), "review", "Manager Review", "split"), 4),
-        # Row 3: five big numbers, equal widths (nested row so they share one line)
-        dbc.Col(xs=12, children=dbc.Row(className="canvas-grid", children=[
-            dbc.Col(metric("critical", "Critical Leads to Seniors", "queue", "Prioritized Lead Queue"),
-                    xs=12, md=6, lg=True),
-            dbc.Col(metric("matches", "Perfect Matches", "queue", "Prioritized Lead Queue"), xs=12, md=6, lg=True),
-            dbc.Col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), xs=12, md=4, lg=True),
-            dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=4, lg=True),
-            dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=4, lg=True),
-        ])),
-        # Row 4
+        # Row 1: the big numbers
+        col(metric("assigned", "Leads Assigned to Reps", "queue", "Lead Queue"), 3, 6),
+        col(metric("review", "Waiting in Manager Review", "review", "Manager Review"), 3, 6),
+        col(metric("critical", "Critical Leads to Seniors", "queue", "Lead Queue"), 3, 6),
+        col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), 3, 6),
+        # Row 2: the leads
+        col(component("Leads by Priority", chart("ch-tiers"), "queue", "Lead Queue", "tiers"), 6),
+        col(component("Leads by Region", chart("ch-region"), "queue", "Lead Queue", "region"), 6),
+        # Row 3: the team
         col(component("How Busy Each Team Is", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
         col(component("How Full Are Our Reps?", chart("ch-fullness", 300), "capacity", "Rep Capacity", "util-h"), 6),
     ]))
@@ -311,10 +298,38 @@ def capacity_tab() -> html.Div:
     ])
 
 
-def quality_tab() -> html.Div:
-    return dbc.Row([
-        dbc.Col([html.H3("Leads", className="component-title mb-2"), html.Div(id="dq-leads")], lg=6),
-        dbc.Col([html.H3("Representatives", className="component-title mb-2"), html.Div(id="dq-reps")], lg=6),
+def about_page() -> html.Div:
+    """The About page: how good the matches are, how fast it runs, how it works, and the data clean-up."""
+    step = lambda n, title, text: html.Div(className="about-step", children=[
+        html.P(n, className="about-step-n"), html.Div([html.H3(title, className="about-step-title"),
+                                                      html.P(text, className="about-step-text")])])
+    how = html.Div(className="component about-how", children=[
+        html.Div(className="component-head", children=html.H2("How Lead Router works", className="component-title")),
+        html.Div(className="about-steps", children=[
+            step("1", "Clean", "Fixes typos, short forms and blanks. Never drops a lead."),
+            step("2", "Score", "Points for company size, activity and industry → Critical, High, Medium or Low. "
+                               "VIP referrals are always Critical."),
+            step("3", "Route", "Most urgent first, to the best-matching rep with room. Critical → Senior → Manager, "
+                               "never Junior. Equal reps share work evenly."),
+        ]),
+        html.P("Want proof? Click ✓ Run Tests at the top of any page.", className="hint about-proof"),
+    ])
+    quality = html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2("Data Quality: what we cleaned up", className="component-title")),
+        html.Div(className="component-body about-quality", children=dbc.Row([
+            dbc.Col([html.H3("Leads", className="about-sub mb-2"), html.Div(id="dq-leads")], lg=6),
+            dbc.Col([html.H3("Representatives", className="about-sub mb-2"), html.Div(id="dq-reps")], lg=6),
+        ])),
+    ])
+    return html.Div(className="page-stack", children=[
+        how,
+        html.Div(id="about-data", style={"display": "none"}, className="page-stack", children=[
+            dbc.Row(className="canvas-grid", children=[
+                dbc.Col(metric("matches", "Perfect Matches", "queue", "Lead Queue"), xs=12, md=6),
+                dbc.Col(metric("speed", "Leads Routed per Second", None, None), xs=12, md=6),
+            ]),
+            quality,
+        ]),
     ])
 
 
@@ -324,7 +339,6 @@ def details() -> html.Div:
             dbc.Tab(queue_tab(), label="Prioritized Lead Queue", tab_id="queue"),
             dbc.Tab(review_tab(), label="Manager Review", tab_id="review", id="tab-review"),
             dbc.Tab(capacity_tab(), label="Rep Capacity", tab_id="capacity"),
-            dbc.Tab(quality_tab(), label="Data Quality", tab_id="quality"),
         ]))
 
 
@@ -348,17 +362,19 @@ def layout() -> html.Div:
         global_header(),
         app_nav(),
         page_header(),
+        dcc.Location(id="url", refresh="callback-nav"),  # the address bar: /, /leads or /about
         html.Div(className="canvas", children=[
             html.Div(id="alert-area"),
             empty_state(),
-            canvas(),
-            details(),
+            html.Div(id="page-dashboard", children=canvas()),
+            html.Div(id="page-leads", style={"display": "none"}, children=details()),
+            html.Div(id="page-about", style={"display": "none"}, children=about_page()),
         ]),
         dbc.Offcanvas(id="detail", title="Lead detail", placement="end", is_open=False, style={"width": "460px"}),
         dcc.Store(id="run-store", data={"run_id": 0}),
         dcc.Store(id="up-leads-store"),
         dcc.Store(id="up-reps-store"),
-        dcc.Store(id="scroll-done"),  # dummy output for the search-scroll callback
+        dcc.Store(id="scroll-done"),  # dummy output for the scroll-to-top callback
         dcc.Store(id="tests-trigger"),  # bumps when the tests should (re)run
         tests_modal(),
     ])
@@ -433,12 +449,13 @@ def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps):
 # ======================================================================================
 # Callback: redraw the whole dashboard after a run or reset
 # ======================================================================================
-METRIC_KEYS = ["assigned", "review", "critical", "matches", "speed", "util", "fixed"]
-CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-split", "ch-capacity", "ch-fullness"]
+METRIC_KEYS = ["assigned", "review", "critical", "util", "matches", "speed"]
+CHART_IDS = ["ch-tiers", "ch-region", "ch-capacity", "ch-fullness"]
 
 
 @callback(
-    Output("empty-state", "style"), Output("canvas", "style"), Output("details", "style"), Output("as-of", "children"),
+    Output("empty-state", "style"), Output("canvas", "style"), Output("details", "style"),
+    Output("about-data", "style"), Output("as-of", "children"),
     *[Output(f"m-{k}", "children") for k in METRIC_KEYS], *[Output(f"m-{k}-cap", "children") for k in METRIC_KEYS],
     *[Output(c, "figure") for c in CHART_IDS],
     Output("tab-review", "label"), Output("review-grid", "rowData"), Output("dq-leads", "children"), Output("dq-reps", "children"),
@@ -448,7 +465,8 @@ def render(_store):
     r = STATE.result
     if r is None:
         blank = charts.empty()
-        return ({}, {"display": "none"}, {"display": "none"}, "No data yet · Viewing as Sales Operations",
+        return ({}, {"display": "none"}, {"display": "none"}, {"display": "none"},
+                "No data yet · Viewing as Sales Operations",
                 *["—"] * len(METRIC_KEYS), *[""] * len(METRIC_KEYS), *[blank] * len(CHART_IDS),
                 "Manager Review", [], None, None)
 
@@ -476,27 +494,18 @@ def render(_store):
         "speed": (f"{m['throughput_lps']:,}", f"{m['total_leads']:,} leads in {seconds:.2f} s"),
         "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} slots · "
                                          f"{m['capacity_violations']} over capacity"),
-        "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had a gap · 0 dropped"),
         # Share of assigned leads whose rep matches region, language AND industry
         "matches": (f"{100 * by_traits[3] / max(m['assigned'], 1):.1f}%",
                     f"rep has the same region, language & industry"),
     }
 
     # --- charts
-    stages = [
-        ("Leads uploaded", lq.rows_in),
-        ("Kept after cleanup", m["total_leads"]),
-        ("Given to a rep", m["assigned"]),
-    ]
     region_counts = results["region"].value_counts().reindex(REGIONS, fill_value=0)
     region_counts = region_counts[region_counts > 0]
     figures = [
         charts.tier_bar(m["tiers"]),
-        charts.routing_funnel(stages),
         charts.donut(list(region_counts.index), list(region_counts.values),
                      f"<b>{m['total_leads']:,}</b><br><span style='font-size:12px'>leads</span>"),
-        charts.destination_columns(results),
-        charts.assigned_vs_review(m["assigned"], m["overflow"]),
         charts.capacity_by_seniority(reps),
         charts.rep_fullness(reps),
     ]
@@ -504,7 +513,7 @@ def render(_store):
     review_columns = ["lead_id", "company_name", "priority", "score", "overflow_reason", "region", "language",
                       "industry", "reason"]  # only what the table shows: keeps the page light
     review_rows = results.loc[results["status"] == "Manager Review", review_columns].to_dict("records")
-    return ({"display": "none"}, {}, {}, as_of,
+    return ({"display": "none"}, {}, {}, {}, as_of,
             *[metrics[k][0] for k in METRIC_KEYS], *[metrics[k][1] for k in METRIC_KEYS],
             *figures,
             f"Manager Review ({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq))
@@ -536,41 +545,49 @@ def _quality_table(report) -> list:
 # ======================================================================================
 # Callbacks: navigation ("View Report" links, nav bar, global search)
 # ======================================================================================
-@callback(Output("tabs", "active_tab", allow_duplicate=True),
+@callback(Output("page-dashboard", "style"), Output("page-leads", "style"), Output("page-about", "style"),
+          Output({"type": "nav", "page": ALL}, "className"),
+          Output("page-title", "children"), Output("page-eyebrow", "children"),
+          Input("url", "pathname"))
+def show_page(pathname):
+    """Show the page for the current address and highlight its tab. Unknown addresses show the Dashboard."""
+    path = pathname if pathname in PAGES else "/"
+    show = lambda page: {} if page == path else {"display": "none"}
+    nav_ids = [o["id"]["page"] for o in ctx.outputs_list[3]]
+    label, title = PAGES[path]
+    return (show("/"), show("/leads"), show("/about"),
+            ["nav-item active" if page == path else "nav-item" for page in nav_ids],
+            title, "Dashboard" if path == "/" else label)
+
+
+@callback(Output("url", "pathname", allow_duplicate=True), Output("tabs", "active_tab", allow_duplicate=True),
           Input({"type": "open-tab", "tab": ALL, "key": ALL}, "n_clicks"), prevent_initial_call=True)
 def open_tab(clicks):
+    """'View Report' links and expand icons: go to the page (and tab) with the details."""
     if not ctx.triggered_id or not any(clicks):
-        return no_update
-    return ctx.triggered_id["tab"]
+        return no_update, no_update
+    tab = ctx.triggered_id["tab"]
+    return TAB_PAGE.get(tab, "/"), (tab if tab in ("queue", "review", "capacity") else no_update)
 
 
 @callback(Output("q-search", "value"), Output("tabs", "active_tab", allow_duplicate=True),
+          Output("url", "pathname", allow_duplicate=True),
           Input("global-search", "value"), prevent_initial_call=True)
 def global_search(text):
-    """The search box in the header filters the lead queue and switches to it."""
-    return text or "", "queue"
+    """The search box in the header filters the lead queue and opens the Leads & Reps page."""
+    return text or "", "queue", "/leads"
 
 
-# Runs in the browser (no server round trip): after a search, scroll down to the lead queue
-# so the results are on screen. Before the first run there is no queue yet, so it scrolls to
-# the "ready for data" box instead.
+# Runs in the browser: every time the page changes, start at the top, like opening a new page.
 app.clientside_callback(
     """
-    function(nSubmit, value) {
-        function scrollToResults() {
-            var details = document.getElementById('details');
-            var target = (details && details.style.display !== 'none') ? details
-                       : document.getElementById('empty-state');
-            if (target) { target.scrollIntoView({behavior: 'smooth', block: 'start'}); }
-        }
-        setTimeout(scrollToResults, 250);   // start moving right away
-        setTimeout(scrollToResults, 1200);  // and settle exactly once the filtered table has loaded
+    function(pathname) {
+        window.scrollTo({top: 0, behavior: 'instant'});
         return window.dash_clientside.no_update;
     }
     """,
     Output("scroll-done", "data"),
-    Input("global-search", "n_submit"), Input("global-search", "value"),
-    prevent_initial_call=True,
+    Input("url", "pathname"),
 )
 
 

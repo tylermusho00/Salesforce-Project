@@ -83,24 +83,6 @@ def tier_bar(tier_counts: dict[str, int]) -> go.Figure:
     return fig
 
 
-def routing_funnel(stages: list[tuple[str, int]]) -> go.Figure:
-    """Three plain steps: leads uploaded -> leads kept after cleaning -> leads given to a rep."""
-    fig = _base()
-    names = [name for name, _ in stages]
-    values = [v for _, v in stages]
-    first = max(values[0], 1)
-    fig.add_trace(go.Funnel(
-        y=names, x=values, textinfo="none",
-        text=[f"{v:,}" + ("" if i == 0 else f"  ({100 * v / first:.1f}%)") for i, v in enumerate(values)],
-        texttemplate="%{text}", textposition="inside", textfont={"color": "white", "size": 13},
-        marker={"color": [PURPLE, TEAL, GREEN][:len(stages)]}, connector={"fillcolor": "#ECEBEA"},
-        hovertemplate="%{y}: %{x:,}<extra></extra>",
-    ))
-    fig.update_yaxes(tickfont={"size": 12, "color": "#181818"}, showgrid=False)
-    fig.update_layout(margin={"l": 8, "r": 12, "t": 12, "b": 8})
-    return fig
-
-
 # ======================================================================================
 # Row 2
 # ======================================================================================
@@ -118,39 +100,6 @@ def donut(labels: list[str], values: list[int], center: str, legend_title: str =
     _legend_below(fig)
     if caption:
         _caption(fig, caption)
-    return fig
-
-
-def assigned_vs_review(assigned: int, review: int) -> go.Figure:
-    """Two slices: leads already given to a rep vs. leads waiting for a manager."""
-    total = max(assigned + review, 1)
-    fig = donut(["Assigned to a rep", "Waiting in Manager Review"], [assigned, review],
-                f"<b>{100 * assigned / total:.1f}%</b><br><span style='font-size:12px'>assigned</span>",
-                colors=[GREEN, ORANGE])
-    fig.update_traces(texttemplate="%{value:,}")
-    return fig
-
-
-def destination_columns(results: pd.DataFrame) -> go.Figure:
-    """Stacked columns: who got the leads (Junior / Senior / Manager / nobody yet), split by priority.
-    Shows at a glance that Juniors never get Critical leads."""
-    fig = _base()
-    dest = results["rep_seniority"].fillna("Manager Review")
-    order = ["Junior", "Senior", "Manager", "Manager Review"]
-    labels = ["Junior reps", "Senior reps", "Managers", "Manager Review"]
-    table = pd.crosstab(dest, results["priority"]).reindex(index=order, columns=TIERS, fill_value=0)
-    for tier in TIERS:
-        fig.add_bar(x=labels, y=table[tier], name=tier, marker_color=TIER_COLORS[tier],
-                    hovertemplate=f"{tier}: " + "%{y:,} leads<extra>%{x}</extra>")
-    totals = table.sum(axis=1)
-    fig.add_scatter(x=labels, y=totals, mode="text", text=[f"{t:,}" for t in totals],
-                    textposition="top center", textfont={"size": 12, "color": "#3E3E3C"},
-                    showlegend=False, hoverinfo="skip")
-    fig.update_layout(barmode="stack", bargap=0.35)
-    fig.update_yaxes(title={"text": "Leads", "font": {"size": 11, "color": AXIS_TEXT}}, tickformat="~s",
-                     range=[0, max(totals.max(), 1) * 1.18])
-    fig.update_xaxes(showgrid=False, tickfont={"size": 12, "color": "#181818"})
-    _legend_below(fig, y=-0.14)
     return fig
 
 
