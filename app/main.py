@@ -19,7 +19,6 @@ import base64
 import io
 import threading
 import time
-from datetime import datetime
 from typing import Any
 
 import dash_ag_grid as dag
@@ -28,6 +27,7 @@ import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from app import charts
+from app.capacity_simulator import capacity_simulator
 from lead_router import scenarios
 from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
@@ -41,7 +41,7 @@ from lead_router.pipeline import STATE, PipelineError, read_csv, reset_state, ru
 TIERS = charts.TIERS
 REGIONS = ["North America", "Europe", "Asia-Pacific", "Unknown"]
 PAGES = {
-    "/": ("Dashboard", "Lead Routing Dashboard"),
+    "/": ("Dashboard", "Lead routing"),
     "/leads": ("Leads & Reps", "Leads & Reps"),
     "/about": ("About", "About Lead Router"),
 }
@@ -95,7 +95,7 @@ def find_lead(lead_id: str) -> tuple[Lead | None, Assignment | None]:
 
 
 def pick_trace_lead(result: PipelineResult | None) -> str | None:
-    """The lead "Trace a messy lead" opens, chosen the same way every time:
+    """The lead "Trace lead" opens, chosen the same way every time:
     the Critical lead with the most data fixes (ties: lowest lead ID), else any lead with fixes,
     else the top of the queue. None when there is no run."""
     if result is None or not result.assignments:
@@ -134,20 +134,18 @@ def trace_lead_id() -> str | None:
 # ======================================================================================
 # Layout building blocks
 # ======================================================================================
-def report_link(text: str, tab: str, key: str) -> html.A:
-    """A link that opens the page and tab with the details behind a number (like 'View Report')."""
-    return html.A(text, id={"type": "open-tab", "tab": tab, "key": key})
+def report_link(text: str, tab: str, key: str) -> html.Button:
+    return html.Button(text, type="button", className="report-link",
+                       id={"type": "open-tab", "tab": tab, "key": key})
 
 
 def component(title: str, body, tab: str | None, report: str | None, key: str) -> html.Div:
-    """One dashboard component: title (+ expand icon), body, and a 'View Report' footer when it has one."""
-    head = [html.H2(title, className="component-title")]
-    if tab:
-        head.append(html.A("⤢", className="component-expand", title="Open details",
-                           id={"type": "open-tab", "tab": tab, "key": f"{key}-x"}))
-    children = [html.Div(className="component-head", children=head), html.Div(body, className="component-body")]
+    children = [html.Div(html.H2(title, className="component-title"), className="component-head"),
+                html.Div(body, className="component-body")]
     if tab and report:
-        children.append(html.Div(report_link(f"View Report ({report})", tab, key), className="component-foot"))
+        label = {"queue": "View leads", "review": "View review", "capacity": "View capacity",
+                 "quality": "View data quality"}.get(tab, "View details")
+        children.append(html.Div(report_link(label, tab, key), className="component-foot"))
     return html.Div(className="component", children=children)
 
 
@@ -155,7 +153,7 @@ def chart(graph_id: str, height: int = 270) -> dcc.Graph:
     # responsive=True: redraw to the card's width (the canvas is hidden until the first run,
     # so a fixed size measured at page load would be wrong).
     return dcc.Graph(id=graph_id, figure=charts.empty(height), config={"displayModeBar": False},
-                     responsive=True, style={"height": f"{height}px", "width": "100%"})
+                     responsive=True, style={"height": f"{height}px", "width": "100%", "overflow": "hidden"})
 
 
 def metric(key: str, title: str, tab: str | None, report: str | None, small: bool = False) -> html.Div:
@@ -167,12 +165,12 @@ def metric(key: str, title: str, tab: str | None, report: str | None, small: boo
 
 
 def global_header() -> html.Div:
-    """Logo + search. Pressing Enter filters the lead queue and opens Leads & Reps."""
     return html.Div(className="global-header", children=[
         html.Img(src="/assets/salesforce-logo.svg", alt="Salesforce", className="app-logo"),
-        html.Div(className="global-search", children=dcc.Input(
-            id="global-search", type="search", placeholder="Search leads, companies or reps, then press Enter",
-            debounce=True, n_submit=0)),
+        html.Div(className="global-search", children=[
+            html.Label("Search leads or reps", htmlFor="global-search", className="visually-hidden"),
+            dcc.Input(id="global-search", type="search", placeholder="Search leads or reps", debounce=True, n_submit=0),
+        ]),
     ])
 
 
@@ -192,17 +190,16 @@ DASHBOARD_ICON = html.Img(src=("data:image/svg+xml;utf8,<svg xmlns='http://www.w
 
 def page_header() -> html.Div:
     return html.Div(className="page-header", id="top", children=[
-        html.Div(DASHBOARD_ICON, className="page-icon"),
         html.Div(className="page-titles", children=[
-            html.Div("Dashboard", id="page-eyebrow", className="page-eyebrow"),
-            html.H1("Lead Routing Dashboard", id="page-title", className="page-title"),
+            html.Span("Dashboard", id="page-eyebrow", className="visually-hidden", **{"aria-hidden": "true"}),
+            html.H1("Lead routing", id="page-title", className="page-title"),
             dcc.Loading(type="dot", color="#0176D3", children=html.Div(
-                id="as-of", className="page-meta", children="No data yet · Viewing as Sales Operations")),
+                id="as-of", className="page-meta", children="No data yet")),
         ]),
         html.Div(className="page-actions", children=[
             html.Div(className="btn-group", children=[
-                html.Button("Run Sample", id="btn-sample", className="slds-btn"),
-                html.Button("Run Scale (50k)", id="btn-scale", className="slds-btn brand"),
+                html.Button("Run sample", id="btn-sample", className="slds-btn"),
+                html.Button("Run scale (50k)", id="btn-scale", className="slds-btn brand"),
                 html.Button("Reset", id="btn-reset", className="slds-btn destructive"),
             ]),
             # Matching mode: used by the NEXT run (sample, scale or upload). Best available lets a
@@ -219,19 +216,25 @@ def page_header() -> html.Div:
                                    {"label": "Best available (3→2→1)", "value": MODE_BEST},
                                    {"label": "Strict (3 of 3)", "value": MODE_STRICT}]),
             ]),
-            html.Button("Trace a messy lead", id="btn-trace", className="slds-btn", disabled=True,
+            html.Button("Trace lead", id="btn-trace", className="slds-btn", disabled=True,
                         title="Follow one lead from the raw CSV row to its rep: the Critical lead "
                               "with the most data fixes"),
-            dcc.Upload(id="up-leads", children=html.Div("⬆ Leads CSV", id="up-leads-label", className="upload-chip")),
-            dcc.Upload(id="up-reps", children=html.Div("⬆ Reps CSV", id="up-reps-label", className="upload-chip")),
-            html.Button("Run Upload", id="btn-upload", className="slds-btn", disabled=True),
-            dbc.DropdownMenu(label="Export", className="export-menu", align_end=True, children=[
+            html.Details(className="upload-menu", children=[
+                html.Summary("Upload CSVs", className="slds-btn"),
+                html.Div(className="upload-panel", children=[
+                    dcc.Upload(id="up-leads", accept=".csv,text/csv", children=html.Div("Leads CSV", id="up-leads-label", className="upload-chip")),
+                    dcc.Upload(id="up-reps", accept=".csv,text/csv", children=html.Div("Reps CSV (optional)", id="up-reps-label", className="upload-chip")),
+                    html.Small("No reps file? Uses the scale team.", className="hint"),
+                    html.Button("Run upload", id="btn-upload", className="slds-btn", disabled=True),
+                ]),
+            ]),
+            dbc.DropdownMenu(label="Export", id="export-menu", disabled=True, className="export-menu", align_end=True, children=[
                 dbc.DropdownMenuItem("Routed leads (CSV)", id="exp-results"),
-                dbc.DropdownMenuItem("Salesforce Data Loader update (CSV)", id="exp-sf"),
+                dbc.DropdownMenuItem("Salesforce update template (CSV, map IDs first)", id="exp-sf"),
                 dbc.DropdownMenuItem("Manager Review queue (CSV)", id="exp-review"),
                 dbc.DropdownMenuItem("Rep capacity (CSV)", id="exp-reps"),
             ]),
-            html.Button("✓ Run Tests", id="btn-tests", className="slds-btn tests-btn",
+            html.Button("Run checks", id="btn-tests", className="slds-btn tests-btn",
                         title="Run the business scenario checks and see the results"),
             dcc.Download(id="download"),
         ]),
@@ -240,10 +243,8 @@ def page_header() -> html.Div:
 
 def empty_state() -> html.Div:
     return html.Div(id="empty-state", className="component empty-component", children=[
-        html.Div(DASHBOARD_ICON, className="page-icon", style={"margin": "0 auto", "width": "48px", "height": "48px"}),
-        html.H3("Your dashboard is ready for data"),
-        html.P("Click Run Sample (100 leads, 10 reps) or Run Scale (50,000 leads, 1,600 reps) above, "
-               "or upload your own leads CSV. Results appear here in seconds."),
+        html.H3("Start a routing run"),
+        html.P("Run sample data or upload your CSVs."),
     ])
 
 
@@ -252,17 +253,17 @@ def canvas() -> html.Div:
     col = lambda child, lg, md=12: dbc.Col(child, xs=12, md=md, lg=lg)
     return html.Div(id="canvas", style={"display": "none"}, children=dbc.Row(className="canvas-grid", children=[
         dbc.Col(xs=12, children=dbc.Row(className="canvas-grid", children=[
-            dbc.Col(metric("assigned", "Leads Assigned to Reps", "queue", "Lead Queue"), xs=12, md=6, lg=True),
-            dbc.Col(metric("review", "Waiting in Manager Review", "review", "Manager Review"), xs=12, md=6, lg=True),
-            dbc.Col(metric("critwait", "Critical Leads Waiting", "review", "Manager Review", small=True), xs=12, md=6, lg=True),
-            dbc.Col(metric("critical", "Critical Leads to Seniors", "queue", "Lead Queue"), xs=12, md=6, lg=True),
-            dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=6, lg=True),
+            dbc.Col(metric("assigned", "Assigned leads", "queue", "Lead Queue"), xs=12, md=6, lg=True),
+            dbc.Col(metric("review", "Manager Review", "review", "Manager Review"), xs=12, md=6, lg=True),
+            dbc.Col(metric("critwait", "Critical waiting", "review", "Manager Review", small=True), xs=12, md=6, lg=True),
+            dbc.Col(metric("critical", "Critical to Seniors", "queue", "Lead Queue"), xs=12, md=6, lg=True),
+            dbc.Col(metric("util", "Capacity used", "capacity", "Rep capacity"), xs=12, md=6, lg=True),
         ])),
-        col(component("Leads by Priority Tier vs Reference", [chart("ch-tiers", 330),
-            html.Div(id="tier-caption", className="chart-caption")], "queue", "Lead Queue", "tiers"), 6),
-        col(component("Leads by Region", chart("ch-region"), "queue", "Lead Queue", "region"), 6),
-        col(component("How Busy Each Team Is", chart("ch-capacity", 300), "capacity", "Rep Capacity", "top"), 6),
-        col(component("How Full Are Our Reps?", chart("ch-util", 300), "capacity", "Rep Capacity", "util-h"), 6),
+        col(component("Priority tiers", [chart("ch-tiers", 330),
+            html.Details(className="chart-caption", children=[html.Summary("Reference comparison"), html.Div(id="tier-caption")])], "queue", "Lead Queue", "tiers"), 6),
+        col(component("Leads by region", chart("ch-region"), "queue", "Lead Queue", "region"), 6),
+        col(component("Capacity by seniority", chart("ch-capacity", 300), "capacity", "Rep capacity", "top"), 6),
+        col(component("Rep utilization", chart("ch-util", 300), "capacity", "Rep capacity", "util-h"), 6),
     ]))
 
 
@@ -274,7 +275,7 @@ QUEUE_COLS = [
     {"field": "priority", "headerName": "Tier", "width": 110, "cellRenderer": "TierBadge"},
     {"field": "score", "headerName": "Score", "width": 90, "filter": "agNumberColumnFilter"},
     {"field": "status", "headerName": "Status", "width": 145, "cellRenderer": "StatusPill"},
-    {"field": "rep_name", "headerName": "Assigned Rep", "flex": 1.4, "minWidth": 170},
+    {"field": "rep_name", "headerName": "Assigned rep", "flex": 1.4, "minWidth": 170},
     {"field": "rep_seniority", "headerName": "Seniority", "width": 110},
     {"field": "region", "headerName": "Region", "width": 135},
     {"field": "language", "headerName": "Language", "width": 110},
@@ -290,7 +291,7 @@ GRID_THEME = "ag-theme-quartz"
 
 def _select(select_id: str, label: str, options: list[str], value: str = "all", all_label: str = "All"):
     opts = ([{"label": all_label, "value": "all"}] if all_label else []) + [{"label": o, "value": o} for o in options]
-    return dbc.InputGroup([dbc.InputGroupText(label), dbc.Select(id=select_id, options=opts, value=value)], size="sm")
+    return dbc.InputGroup([html.Label(label, htmlFor=select_id, className="input-group-text"), dbc.Select(id=select_id, options=opts, value=value)], size="sm")
 
 
 def queue_tab() -> html.Div:
@@ -301,11 +302,10 @@ def queue_tab() -> html.Div:
             dbc.Col(_select("q-tier", "Tier", TIERS), xs=6, md=2),
             dbc.Col(_select("q-region", "Region", REGIONS), xs=6, md=2),
             dbc.Col(_select("q-status", "Status", ["Assigned", "Manager Review", VIP_UNKNOWN]), xs=6, md=2),
-            dbc.Col(dbc.InputGroup([dbc.InputGroupText("Group by"), dbc.Select(id="q-group", value="none", options=[
+            dbc.Col(dbc.InputGroup([html.Label("Group by", htmlFor="q-group", className="input-group-text"), dbc.Select(id="q-group", value="none", options=[
                 {"label": "None", "value": "none"}, {"label": "Tier", "value": "priority"},
                 {"label": "Rep", "value": "rep"}])], size="sm"), xs=6, md=3),
         ]),
-        html.Div("Click any row to see its score breakdown and routing explanation.", className="hint mb-2"),
         html.Div(id="group-wrap", style={"display": "none"}, children=dag.AgGrid(
             id="group-grid", columnDefs=[], rowData=[], className=GRID_THEME,
             defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -316,6 +316,8 @@ def queue_tab() -> html.Div:
                            "floatingFilter": True, "suppressHeaderMenuButton": True},
             dashGridOptions={"pagination": True, "paginationPageSize": 50, "cacheBlockSize": 50,
                              "maxBlocksInCache": 10, "tooltipShowDelay": 300,
+                                    # Superseded Dash requests must not exhaust AG Grid loading slots.
+                                    "maxConcurrentDatasourceRequests": -1, "blockLoadDebounceMillis": 100,
                              "rowSelection": {"mode": "singleRow", "checkboxes": False, "enableClickSelection": True}},
             filterModel={"_run": {"filterType": "number", "type": "equals", "filter": 0}},
             style={"height": "520px"})),
@@ -352,6 +354,8 @@ def review_tab() -> html.Div:
                                   "resizable": True, "suppressHeaderMenuButton": True},
                    dashGridOptions={"pagination": True, "paginationPageSize": 20, "cacheBlockSize": 20,
                                     "maxBlocksInCache": 10, "tooltipShowDelay": 300,
+                                    # Superseded Dash requests must not exhaust AG Grid loading slots.
+                                    "maxConcurrentDatasourceRequests": -1, "blockLoadDebounceMillis": 100,
                                     "rowSelection": {"mode": "singleRow", "checkboxes": False,
                                                      "enableClickSelection": True}},
                    filterModel={"_run": {"filterType": "number", "type": "equals", "filter": 0}},
@@ -375,10 +379,11 @@ def capacity_tab() -> html.Div:
          "tooltipField": "data_fixes"},
     ]
     return html.Div([
+        capacity_simulator(),
         dbc.Row(className="g-2 mb-2 toolbar", children=[
             dbc.Col(_select("c-region", "Region", REGIONS), xs=6, md=3),
             dbc.Col(_select("c-seniority", "Seniority", ["Junior", "Senior", "Manager"]), xs=6, md=3),
-            dbc.Col(dbc.InputGroup([dbc.InputGroupText("Sort"), dbc.Select(id="c-sort", value="most", options=[
+            dbc.Col(dbc.InputGroup([html.Label("Sort", htmlFor="c-sort", className="input-group-text"), dbc.Select(id="c-sort", value="most", options=[
                 {"label": "Most loaded", "value": "most"}, {"label": "Least loaded", "value": "least"},
                 {"label": "Most open slots", "value": "open"}])], size="sm"), xs=12, md=3),
         ]),
@@ -395,9 +400,7 @@ def quality_tab() -> html.Div:
             dbc.Col([html.H3("Leads", className="component-title mb-2"), html.Div(id="dq-leads")], lg=6),
             dbc.Col([html.H3("Representatives", className="component-title mb-2"), html.Div(id="dq-reps")], lg=6),
         ]),
-        html.H3("Every value we found", className="component-title mt-3 mb-1"),
-        html.Div("Every different way each column was written in the file, and what the router used instead. "
-                 "Open a field to see its values.", className="hint mb-2"),
+        html.H3("Source values", className="component-title mt-3 mb-1"),
         dbc.Row([
             dbc.Col([html.H4("Leads", className="sub-title"), html.Div(id="va-leads")], lg=6),
             dbc.Col([html.H4("Representatives", className="sub-title"), html.Div(id="va-reps")], lg=6),
@@ -410,38 +413,37 @@ def about_page() -> html.Div:
     step = lambda n, title, text: html.Div(className="about-step", children=[
         html.P(n, className="about-step-n"), html.Div([html.H3(title, className="about-step-title"),
                                                       html.P(text, className="about-step-text")])])
-    how = html.Div(className="component about-how", children=[
-        html.Div(className="component-head", children=html.H2("How Lead Router works", className="component-title")),
+    how = html.Details(className="component about-how", children=[
+        html.Summary("How routing works", className="section-summary"),
         html.Div(className="about-steps", children=[
-            step("1", "Clean", "Fixes typos, short forms and blanks. Never drops a lead."),
+            step("1", "Clean", "Normalizes values and preserves distinct source rows."),
             step("2", "Score", "Points for company size, activity and industry → Critical, High, Medium or Low. "
                                "VIP referrals are always Critical."),
             step("3", "Route", "Most urgent first, to the best-matching rep with room. Critical → Senior → Manager, "
                                "never Junior. Equal reps share work evenly."),
         ]),
-        html.P("Want proof? Click ✓ Run Tests at the top of any page.", className="hint about-proof"),
     ])
-    quality = html.Div(className="component", children=[
-        html.Div(className="component-head", children=html.H2("Data Quality: what we cleaned up", className="component-title")),
+    quality = html.Div(id="data-quality", className="component", children=[
+        html.Div(className="component-head", children=html.H2("Data quality", className="component-title")),
         html.Div(quality_tab(), className="component-body about-quality"),
     ])
     return html.Div(className="page-stack", children=[
         how,
         html.Div(id="about-data", style={"display": "none"}, className="page-stack", children=[
             dbc.Row(className="canvas-grid", children=[
-                dbc.Col(metric("matches", "Perfect Matches", "queue", "Lead Queue"), xs=12, md=6, lg=3),
-                dbc.Col(metric("fairness", "Distribution Fairness", "capacity", "Rep Capacity"), xs=12, md=6, lg=3),
-                dbc.Col(metric("speed", "Leads Routed per Second", None, None), xs=12, md=6, lg=3),
-                dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=6, lg=3),
+                dbc.Col(metric("matches", "Exact matches", "queue", "Lead Queue"), xs=12, md=6, lg=3),
+                dbc.Col(metric("fairness", "Distribution fairness", "capacity", "Rep capacity"), xs=12, md=6, lg=3),
+                dbc.Col(metric("speed", "Leads per second", None, None), xs=12, md=6, lg=3),
+                dbc.Col(metric("fixed", "Values corrected", "quality", "Data Quality"), xs=12, md=6, lg=3),
                 dbc.Col(component("Rules Check", dbc.Row(className="g-3 px-2", children=[
                     dbc.Col(html.Div(id="rules-check"), xs=12, lg=7),
-                    dbc.Col([html.H3("Time per stage (measured on this run)", className="sub-title"),
+                    dbc.Col([html.H3("Stage timings", className="sub-title"),
                              chart("ch-timings", 120), html.Div(id="timing-caption", className="chart-caption")], xs=12, lg=5),
-                ]), "capacity", "Rep Capacity", "rules"), xs=12),
-                dbc.Col(component("Lead Routing Funnel", chart("ch-funnel"), "queue", "Lead Queue", "funnel"), xs=12, lg=6),
-                dbc.Col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), xs=12, lg=6),
-                dbc.Col(component("Who Got the Leads (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), xs=12, lg=6),
-                dbc.Col(component("Assigned vs. Manager Review", chart("ch-split"), "review", "Manager Review", "split"), xs=12, lg=6),
+                ]), "capacity", "Rep capacity", "rules"), xs=12),
+                dbc.Col(component("Routing funnel", chart("ch-funnel"), "queue", "Lead Queue", "funnel"), xs=12, lg=6),
+                dbc.Col(component("Review reasons", chart("ch-reasons"), "review", "Manager Review", "reasons"), xs=12, lg=6),
+                dbc.Col(component("Assignments by priority", chart("ch-destination"), "capacity", "Rep capacity", "dest"), xs=12, lg=6),
+                dbc.Col(component("Assignment status", chart("ch-split"), "review", "Manager Review", "split"), xs=12, lg=6),
             ]),
             quality,
         ]),
@@ -451,9 +453,9 @@ def about_page() -> html.Div:
 def details() -> html.Div:
     return html.Div(id="details", className="component details", style={"display": "none"}, children=
         dbc.Tabs(id="tabs", active_tab="queue", children=[
-            dbc.Tab(queue_tab(), label="Prioritized Lead Queue", tab_id="queue"),
+            dbc.Tab(queue_tab(), label="Lead queue", tab_id="queue"),
             dbc.Tab(review_tab(), label="Manager Review", tab_id="review", id="tab-review"),
-            dbc.Tab(capacity_tab(), label="Rep Capacity", tab_id="capacity"),
+            dbc.Tab(capacity_tab(), label="Rep capacity", tab_id="capacity"),
         ]))
 
 
@@ -465,8 +467,8 @@ def tests_modal() -> dbc.Modal:
         dbc.ModalBody(dcc.Loading(type="circle", color="#0176D3", children=html.Div(
             id="tests-body", className="tests-body"))),
         dbc.ModalFooter([
-            html.Span("These are the same checks our automated pytest suite runs on every change.", className="hint me-auto"),
-            html.Button("↻ Run again", id="tests-again", className="slds-btn"),
+
+            html.Button("Run again", id="tests-again", className="slds-btn"),
             html.Button("Close", id="tests-close", className="slds-btn brand"),
         ]),
     ])
@@ -495,7 +497,7 @@ def layout() -> html.Div:
     ])
 
 
-app = Dash(__name__, title="Lead Routing Dashboard", external_stylesheets=[dbc.themes.BOOTSTRAP],
+app = Dash(__name__, title="Lead routing", external_stylesheets=[dbc.themes.BOOTSTRAP],
            suppress_callback_exceptions=True)  # some components live in tabs not rendered yet
 app.layout = layout
 server = app.server  # for a production server such as gunicorn / waitress
@@ -587,6 +589,7 @@ RENDER_OUTPUTS = {
     "dq_leads": Output("dq-leads", "children"), "dq_reps": Output("dq-reps", "children"),
     "va_leads": Output("va-leads", "children"), "va_reps": Output("va-reps", "children"),
     "trace_disabled": Output("btn-trace", "disabled"),
+    "export_disabled": Output("export-menu", "disabled"),
 }
 METRIC_CLASS = "metric-value small"
 
@@ -598,23 +601,22 @@ def render(_store=None) -> dict[str, Any]:
         blank = charts.empty()
         return {
             "empty_style": {}, "canvas_style": {"display": "none"}, "details_style": {"display": "none"}, "about_style": {"display": "none"},
-            "as_of": "No data yet · Viewing as Sales Operations",
+            "as_of": "No data yet",
             **{f"value_{k}": "—" for k in METRIC_KEYS}, **{f"caption_{k}": "" for k in METRIC_KEYS},
             "critwait_class": METRIC_CLASS,
             **{f"fig_{c}": blank for c in CHART_IDS},
             "tier_caption": None, "rules_check": None, "timing_caption": None,
             "review_label": "Manager Review", "review_banner": None,
             "review_filter_options": [{"label": "All", "value": "all"}], "review_filter_value": "all",
-            "dq_leads": None, "dq_reps": None, "va_leads": None, "va_reps": None, "trace_disabled": True,
+            "dq_leads": None, "dq_reps": None, "va_leads": None, "va_reps": None, "trace_disabled": True, "export_disabled": True,
         }
 
     m, (results, reps) = r.metrics, frames()
     lq, rq = r.lead_quality, r.rep_quality
     seconds = r.timings["total"]
 
-    as_of = (f"As of {datetime.now():%b %d, %Y, %I:%M %p} · {r.dataset.title()} dataset · "
-             f"{m['total_leads']:,} leads routed in {seconds:.2f} s · Matching: {m['matching_mode']} · "
-             "Viewing as Sales Operations")
+    as_of = (f"{r.dataset.title()} · {m['total_leads']:,} {'lead' if m['total_leads'] == 1 else 'leads'} · {seconds:.2f} s · "
+             f"Matching: {m['matching_mode']}")
 
     # --- match quality: 3 of 3 traits vs. 2 of 3 (see routing.pools_to_try)
     levels = m["match_levels"]
@@ -625,11 +627,9 @@ def render(_store=None) -> dict[str, Any]:
     # --- big numbers: (value, caption)
     waiting = m["critical_waiting"]
     metrics = {
-        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% · traits matched 3/3: {by_traits[3]:,} · "
-                                           f"2/3: {by_traits[2]:,} · 1/3: {by_traits[1]:,}"),
-        "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% need a manager decision"),
-        "critwait": (f"{waiting:,}", "Critical leads with no owner yet: handle these first" if waiting
-                     else "Every Critical lead has a Senior or Manager"),
+        "assigned": (f"{m['assigned']:,}", f"{m['assigned_rate']}% of leads"),
+        "review": (f"{m['overflow']:,}", f"{m['overflow_rate']}% of leads"),
+        "critwait": (f"{waiting:,}", "Needs an owner" if waiting else "All Critical leads assigned"),
         "critical": (f"{m['critical_senior_rate']}%",
                      html.Span([f"{m['critical_to_senior']:,} of {m['critical_total']:,} · ",
                                 html.Span(f"{m['junior_critical_violations']} given to Juniors", className="metric-good")])),
@@ -637,10 +637,11 @@ def render(_store=None) -> dict[str, Any]:
         "speed": (f"{m['throughput_lps']:,}", f"{m['total_leads']:,} leads in {seconds:.2f} s"),
         "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} slots · "
                                          f"{m['capacity_violations']} over capacity"),
-        "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had a gap · 0 dropped"),
+        "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had missing data"),
         # Share of assigned leads whose rep matches region, language AND industry
         "matches": (f"{100 * by_traits[3] / max(m['assigned'], 1):.1f}%",
-                    f"rep has the same region, language & industry"),
+                    html.Details(children=[html.Summary("3 of 3 traits"),
+                        f"3/3: {by_traits[3]:,} · 2/3: {by_traits[2]:,} · 1/3: {by_traits[1]:,}"])),
     }
 
     metrics["fairness"] = (f"{m['fairness_during_run']:.3f}", "Jain index · 1.000 = perfectly even")
@@ -686,7 +687,7 @@ def render(_store=None) -> dict[str, Any]:
         "review_filter_options": review_filter_options(results), "review_filter_value": "all",
         "dq_leads": _quality_table(lq), "dq_reps": _quality_table(rq),
         "va_leads": value_audit(lq), "va_reps": value_audit(rq),
-        "trace_disabled": False,
+        "trace_disabled": False, "export_disabled": False,
     }
 
 
@@ -727,10 +728,10 @@ def rules_check(m: dict[str, Any], previous_fingerprint: str | None = None, data
     juniors, over = m["junior_critical_violations"], m["capacity_violations"]
     fingerprint = m["fingerprint"]
     if previous_fingerprint is None:
-        fp_state, fp_hint = "info", "Reset and run again: the fingerprint stays the same."
+        fp_state, fp_hint = "info", "Reset and run again to compare placements."
     elif previous_fingerprint == fingerprint:
-        fp_state, fp_hint = "ok", (f"Same as the previous {dataset} run in this mode: every decision is identical. "
-                                   "Reset and run again: the fingerprint stays the same.")
+        fp_state, fp_hint = "ok", (f"Same as the previous {dataset} run in this mode: every lead got the same status, rep and match level. "
+                                   "Reset and run again to compare placements.")
     else:
         fp_state, fp_hint = "info", (f"The previous {dataset} run in this mode gave {previous_fingerprint}: "
                                      "the input file or the rules changed since.")
@@ -754,13 +755,7 @@ def timing_caption(timings: dict[str, float], stages: list[str]) -> str:
 
 
 def review_banner(m: dict[str, Any]) -> list:
-    """What Manager Review is, and what a manager does with each lead in it."""
-    if not m["overflow"]:
-        return [html.B("No lead needs a manager this run. "), "Every lead found an eligible rep with room."]
-    return [html.B(f"{m['overflow']:,} of {m['total_leads']:,} leads ({m['overflow_rate']}%) need a manager. "),
-            "Only leads no eligible rep could take land here, and nothing is dropped. For each one: ",
-            html.B("1"), " read the suggested action, ", html.B("2"), " reassign the lead or raise a rep's capacity, ",
-            html.B("3"), " re-run the routing."]
+    return ["Suggestions need manager approval."] if m["overflow"] else ["All leads assigned."]
 
 
 REVIEW_COLUMNS = ["lead_id", "company_name", "priority", "score", "overflow_reason", "suggested_action",
@@ -856,7 +851,7 @@ def _status_badge(status: str) -> html.Span:
 
 
 def value_audit(report) -> list:
-    """"Every value we found": one collapsible table per field. Text fields list each raw spelling and
+    """"Source values": one collapsible table per field. Text fields list each raw spelling and
     what it became; number fields list each way of writing the number with an example."""
     blocks = []
     for name, rows in report.value_map.items():
@@ -907,13 +902,15 @@ def show_page(pathname):
 
 
 @callback(Output("url", "pathname", allow_duplicate=True), Output("tabs", "active_tab", allow_duplicate=True),
+          Output("url", "hash", allow_duplicate=True),
           Input({"type": "open-tab", "tab": ALL, "key": ALL}, "n_clicks"), prevent_initial_call=True)
 def open_tab(clicks):
     """'View Report' links and expand icons: go to the page (and tab) with the details."""
     if not ctx.triggered_id or not any(clicks):
-        return no_update, no_update
+        return no_update, no_update, no_update
     tab = ctx.triggered_id["tab"]
-    return TAB_PAGE.get(tab, "/"), (tab if tab in ("queue", "review", "capacity") else no_update)
+    return (TAB_PAGE.get(tab, "/"), (tab if tab in ("queue", "review", "capacity") else no_update),
+            "#data-quality" if tab == "quality" else "")
 
 
 @callback(Output("q-search", "value"), Output("tabs", "active_tab", allow_duplicate=True),
@@ -927,13 +924,18 @@ def global_search(text):
 # Page navigation starts at the top without replacing the active routing run.
 app.clientside_callback(
     """
-    function(pathname) {
-        window.scrollTo({top: 0, behavior: 'instant'});
+    function(pathname, hash) {
+        setTimeout(function () {
+            var target = pathname === '/about' && hash === '#data-quality'
+                       ? document.getElementById('data-quality') : null;
+            if (target) target.scrollIntoView({block: 'start'});
+            else window.scrollTo({top: 0, behavior: 'instant'});
+        }, 150);
         return window.dash_clientside.no_update;
     }
     """,
     Output("scroll-done", "data"),
-    Input("url", "pathname"),
+    Input("url", "pathname"), Input("url", "hash"),
 )
 
 
@@ -1020,7 +1022,7 @@ def capacity_table(_store, region, seniority, sort):
           prevent_initial_call=True)
 def lead_detail(queue_selection, review_selection, _trace_clicks=None):
     """Clicking a row explains the score, the routing decision, and how the raw row was cleaned.
-    "Trace a messy lead" opens the same drawer on pick_trace_lead's lead, in CSV -> dashboard order."""
+    "Trace lead" opens the same drawer on pick_trace_lead's lead, in CSV -> dashboard order."""
     traced = ctx.triggered_id == "btn-trace"
     if traced:
         lead_id = trace_lead_id()
@@ -1072,8 +1074,8 @@ def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | N
         html.H6("Why this priority?"),
         html.Table(className="detail-table mb-1 w-100", children=html.Tbody(
             [row(label, points(p)) for label, p in lead.score_reasons] + [row(html.B("Total"), html.B(f"{lead.score} pts"))])),
-        html.Div("Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39 · a VIP referral is always Critical",
-                 className="hint mb-3"),
+        html.Details(className="hint mb-3", children=[html.Summary("Scoring rules"),
+            "Critical 85+ · High 60-84 · Medium 40-59 · Low 0-39. VIP referrals are always Critical."]),
     ])
     route = html.Div(id="trace-route", children=[
         html.H6("Why this rep?" if decision.rep_id else "Why is it waiting for a manager?"),
@@ -1081,10 +1083,10 @@ def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | N
         _match_table(lead, decision),
         *suggestion,
     ])
-    clean = html.Div(id="trace-clean", children=[html.H6("What we cleaned up in this lead's data"), fix_table])
+    clean = html.Div(id="trace-clean", children=[html.H6("Data corrections"), fix_table])
     raw = html.Div(id="trace-raw", className="mb-3", children=(
         [html.H6(f"The row as it was in the file (row {lead.row_number:,})"), raw_table] if traced else
-        [html.Details(className="hint", children=[html.Summary("Show the original row from the file"), raw_table])]))
+        [html.Details(className="hint", children=[html.Summary("Original row"), raw_table])]))
     badges = html.Div(className="mb-3", children=[
         html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-2"),
         html.Span(decision.status.value, className="slds-badge " + ("status-assigned" if decision.rep_id else "status-review")),
@@ -1093,11 +1095,7 @@ def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | N
     title = f"{lead.id} · {lead.company_name}"
     if traced:
         title = f"Traced lead: {title}"
-        which = ("The Critical lead with the most data fixes" if lead.priority is Priority.CRITICAL and fixes
-                 else "The lead with the most data fixes" if fixes else "The top lead in the queue (no row needed fixes)")
-        intro = html.P(f"{which} in this run. Follow it from the CSV row to its rep, step by step.",
-                       className="hint mb-2")
-        return [trace_trail(lead, decision, fixes), intro, badges, *sections], title
+        return [trace_trail(lead, decision, fixes), badges, *sections], title
     return [trace_trail(lead, decision, fixes), badges, *sections], title
 
 
@@ -1150,14 +1148,11 @@ def run_tests(_trigger):
         html.Div("✓" if all_ok else "✗", className="tests-summary-mark"),
         html.Div([
             html.P(f"{passed} of {ran} checks passed", className="tests-summary-title"),
-            html.P(f"Each check runs the whole program (clean → score → assign) on the real 50,000-lead file "
-                   f"or a small made-up case. Took {seconds:.1f} seconds.", className="tests-summary-sub"),
+            html.P(f"{seconds:.1f} s · Best available matching · current run unchanged", className="tests-summary-sub"),
         ]),
     ])
     cards = [dbc.Col(_test_card(s), xs=12, lg=6, className="mb-3") for s in results]
-    return [summary, html.P("Checks use Best available matching on fixed scenarios. "
-                            "Your current dashboard run stays unchanged.", className="hint mt-2"),
-            dbc.Row(cards, className="mt-3")]
+    return [summary, dbc.Row(cards, className="mt-3")]
 
 
 def _test_card(s: scenarios.Scenario) -> html.Div:
@@ -1174,13 +1169,12 @@ def _test_card(s: scenarios.Scenario) -> html.Div:
         return html.Div(className="test-blurb", children=[html.P(label, className="test-blurb-label"), body])
     return html.Div(className="test-card", children=[
         html.Div(className="test-card-head", children=[
-            html.Div([html.P(f"Test {s.number}", className="test-eyebrow"), html.H3(s.title, className="test-title")]),
+            html.H3(s.title, className="test-title"),
             badge,
         ]),
         html.Div(_test_graphic(s), className="test-graphic"),
-        blurb("Why this test", s.why),
-        blurb("Result", s.result),
-        blurb("Why it shows it works", s.meaning),
+        html.Details(children=[html.Summary("Test details"),
+            blurb("Purpose", s.why), blurb("Result", s.result), blurb("What it proves", s.meaning)]),
     ])
 
 
@@ -1227,7 +1221,7 @@ def export(*_):
         case "exp-results":
             return dcc.send_data_frame(results.to_csv, f"lead_routing_{name}.csv", index=False)
         case "exp-sf":
-            return dcc.send_data_frame(salesforce_frame(results).to_csv, f"salesforce_lead_update_{name}.csv", index=False)
+            return dcc.send_data_frame(salesforce_frame(results).to_csv, f"salesforce_mapping_template_{name}.csv", index=False)
         case "exp-review":
             return dcc.send_data_frame(results[results["status"] == "Manager Review"].to_csv,
                                        f"manager_review_{name}.csv", index=False)

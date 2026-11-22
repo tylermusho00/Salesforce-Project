@@ -1,0 +1,14 @@
+.capacity-sim { margin: 12px 0 24px; padding: 8px 0 20px; border-bottom: 1px solid var(--border); }
+.sim-heading, .sim-case-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sim-label, .sim-outcome { color: var(--text-weaker); font-size: 12px; }
+.capacity-sim label { display: block; font-weight: 500; margin-bottom: 4px; }
+.sim-help { margin-top: 12px; }
+.sim-help p { max-width: 70ch; margin: 8px 0; }
+.sim-case { padding: 16px 0; border-top: 1px solid var(--border); }
+.sim-case h4 { font-size: 15px; font-weight: 500; margin: 0; }
+.sim-case > .hint { margin: 4px 0 12px; }
+.sim-numbers { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; margin-bottom: 12px; }
+.sim-numbers strong { display: block; font-size: 24px; color: var(--metric); font-weight: 500; font-variant-numeric: tabular-nums; }
+.sim-numbers span { display: block; font-size: 12px; color: var(--text-weak); }
+.sim-baseline { font-size: 13px; color: var(--text-weak); margin-bottom: 12px; }
+@media(max-width: 800px) { .sim-numbers { grid-template-columns: repeat(2,minmax(0,1fr)); } .sim-heading { align-items: center; } }

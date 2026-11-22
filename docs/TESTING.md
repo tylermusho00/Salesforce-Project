@@ -1,6 +1,6 @@
 # How we know Lead Router works
 
-Lead Router has **244 automated tests** written with **pytest**, the standard testing tool for Python.
+Lead Router has **293 automated tests** written with **pytest**, the standard testing tool for Python.
 Most of them check small technical details. This page covers the **business scenario tests**
 (`tests/test_business_scenarios.py`): each one checks a promise a sales manager would care about,
 in words anyone can follow.
@@ -160,7 +160,7 @@ still enough to route, and the hopeless case went to a manager with a reason a p
 
 ---
 
-## The other 233 tests
+## Other test coverage
 
 | File | What it checks |
 |---|---|
@@ -172,6 +172,9 @@ still enough to route, and the hopeless case went to a manager with a reason a p
 | `test_pipeline.py` | Empty files, wrong columns, zero reps, Reset |
 | `test_properties.py` | 150 batches of random garbage: never crashes, never breaks a rule |
 | `test_benchmark.py` | Times the 50,000-lead run |
+| `test_capacity_simulator.py` | Independent capacity scenarios, replay order, safety, stale previews and no active-run mutation |
+| `test_audit_closeout.py` | Raw source-row retention, independent conservation checks and source rep IDs in exports |
+| `test_dashboard.py` | Dashboard callbacks, navigation, export guards and rendering |
 
 All of them run automatically on GitHub on every push.
 

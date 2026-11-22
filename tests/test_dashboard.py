@@ -66,7 +66,7 @@ def test_render_after_sample_run_shows_every_evidence_panel():
     out = dashboard.render()
     assert out["canvas_style"] == {} and out["trace_disabled"] is False
     assert f"Matching: {m['matching_mode']}" in out["as_of"]
-    assert "traits matched 3/3" in out["caption_assigned"]          # 3/2/1 split kept
+    assert "3/3:" in text_of(out["caption_matches"])          # 3/2/1 split kept in disclosure
     assert out["value_critwait"] == f"{m['critical_waiting']:,}"
     assert ("metric-bad" in out["critwait_class"]) == (m["critical_waiting"] > 0)
     rules = text_of(out["rules_check"])
@@ -146,6 +146,17 @@ def test_upload_uses_the_toggle_and_a_bad_upload_keeps_the_previous_result():
     assert STATE.result.metrics["min_traits"] == 1
 
 
+def test_oversized_numbers_in_an_upload_do_not_crash():
+    """Audit F5: a 400-digit company size or capacity used to raise OverflowError in the callback."""
+    huge = "9" * 400
+    leads = upload(LEAD_HEADER + f"X-1,Acme,NA,EN,Technology,{huge},,True\n")
+    reps = upload(REP_HEADER + f"R-1,Ann,NA,EN,Technology,Senior,0,{huge}\n")
+    store, alert = click("btn-upload", leads, reps, dashboard.MODE_BEST)
+    assert alert is None or alert.color != "danger"
+    assert STATE.result.dataset == "upload" and STATE.result.metrics["rows_in"] == 1
+    assert STATE.result.leads[0].company_size is None
+
+
 # ---------------------------------------------------------------- Manager Review tab
 def test_review_rows_have_suggested_action_and_critical_first():
     show(sample(min_traits=3))
@@ -169,7 +180,7 @@ def test_review_chips_count_critical_and_each_reason():
         option = next(o for o in options if o["value"] == f"reason:{reason}")
         assert option["label"].endswith(f"({count:,})")
         assert len(dashboard.review_frame(option["value"])) == count
-    assert "suggested action" in text_of(dashboard.review_banner(m))
+    assert "manager approval" in text_of(dashboard.review_banner(m))
 
 
 def test_review_grid_is_paged_on_the_server_with_the_chip_in_the_filter_model():
@@ -243,7 +254,7 @@ def test_trace_drawer_has_four_step_trail_in_csv_order():
     trail = text_of(body[0])
     for step in ("Raw row", "Cleaned", "Scored", "Routed"):
         assert step in trail
-    assert [getattr(part, "id", None) for part in body[3:]] == ["trace-raw", "trace-clean", "trace-score",
+    assert [part.id for part in body if getattr(part, "id", None)] == ["trace-raw", "trace-clean", "trace-score",
                                                                "trace-route"]
 
 
@@ -325,8 +336,9 @@ def test_report_links_open_the_page_with_the_requested_evidence(tab, page):
             "prop_id": json.dumps(clicked) + ".n_clicks", "value": 1}]))
         return dashboard.open_tab([1])
 
-    path, active = copy_context().run(call)
+    path, active, anchor = copy_context().run(call)
     assert path == page
+    assert anchor == ("#data-quality" if tab == "quality" else "")
     assert active == (tab if page == "/leads" else dashboard.no_update)
 
 

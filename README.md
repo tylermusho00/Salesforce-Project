@@ -185,8 +185,9 @@ Critical 85+ · High 60–84 · Medium 40–59 · Low 0–39
 | First match | 0.620 | 0.418 | 89.0% |
 
 Plain round-robin ignores capacity, so Seniors fill up early and Critical leads spill over;
-first-match buries a few reps while the rest sit idle. Each pool holds only ~10–30 reps,
-so checking them all per lead is fast.
+first-match buries a few reps while the rest sit idle. Exact 3-trait pools are small, so
+most leads are placed after a short scan; relaxed pools can hold hundreds of reps (see
+[PERFORMANCE.md](docs/PERFORMANCE.md#how-the-work-grows-big-o-in-plain-words)).
 
 ## Changing the rules
 
@@ -203,7 +204,7 @@ Then run `pytest -q`.
 
 ## Tests
 
-The merged suite has **244 passing tests**. See [integration validation](docs/INTEGRATION_VALIDATION.md) for the comparison with the pre-merge version.
+The current suite has **293 passing tests**. See [UI verification](docs/UI_VERIFICATION.md) for the latest browser checks and [integration validation](docs/INTEGRATION_VALIDATION.md) for the earlier merge comparison.
 
 | File | What it proves |
 |---|---|
