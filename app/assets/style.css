@@ -289,3 +289,6 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 .ml-note { background: #FEF7E5; border-left: 4px solid #DD7A01; border-radius: 4px; padding: 8px 12px; font-size: 13px; }
 .ml-summary { font-size: 14px; }
 @media (max-width: 1200px) { .about-steps { grid-template-columns: repeat(2, 1fr); } }
+.ml-pill { display: inline-block; font-size: 12px; font-weight: 700; color: #8C4B02; background: #FEF1CD;
+  border: 1px solid #F9C66B; border-radius: 12px; padding: 1px 9px; line-height: 18px; }
+.ml-filter .input-group-text { background: #FEF7E5; border-color: #F9C66B; color: #8C4B02; font-weight: 700; }

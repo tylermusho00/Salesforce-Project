@@ -31,3 +31,9 @@ dagcomponentfuncs.CapacityBar = function (props) {
     React.createElement("span", { className: "cap-label" }, d.load + " / " + d.max_capacity)
   );
 };
+
+// Machine-learning flag: an orange pill; the reason shows on hover (tooltipField: unusual_record)
+dagcomponentfuncs.MlFlag = function (props) {
+  if (!props.value) return null;
+  return React.createElement("span", { className: "ml-pill" }, "\u26A0 " + props.value);
+};

@@ -73,7 +73,10 @@ def frames() -> tuple[pd.DataFrame, pd.DataFrame]:
             results = results_frame(STATE.result)
             results["_search"] = (results["lead_id"] + " " + results["company_name"] + " " +
                                   results["rep_name"].fillna("") + " " + results["rep_id"].fillna("")).str.lower()
-            _CACHE.update(run_id=STATE.run_id, results=results, reps=reps_frame(STATE.result))
+            results["ml_flag"] = results["unusual_record"].map(lambda note: "Unusual" if note else "")
+            reps = reps_frame(STATE.result)
+            reps["ml_flag"] = reps["unusual_record"].map(lambda note: "Unusual" if note else "")
+            _CACHE.update(run_id=STATE.run_id, results=results, reps=reps)
         return _CACHE["results"], _CACHE["reps"]
 
 
@@ -203,6 +206,8 @@ QUEUE_COLS = [
     {"field": "priority", "headerName": "Tier", "width": 110, "cellRenderer": "TierBadge"},
     {"field": "score", "headerName": "Score", "width": 90, "filter": "agNumberColumnFilter"},
     {"field": "status", "headerName": "Status", "width": 145, "cellRenderer": "StatusPill"},
+    {"field": "ml_flag", "headerName": "ML check", "width": 125, "cellRenderer": "MlFlag",
+     "tooltipField": "unusual_record"},
     {"field": "rep_name", "headerName": "Assigned Rep", "flex": 1.4, "minWidth": 170},
     {"field": "rep_seniority", "headerName": "Seniority", "width": 110},
     {"field": "region", "headerName": "Region", "width": 135},
@@ -210,6 +215,7 @@ QUEUE_COLS = [
     {"field": "industry", "headerName": "Industry", "width": 130},
     {"field": "notes", "headerName": "Notes", "flex": 1.4, "minWidth": 170, "tooltipField": "notes"},
     {"field": "reason", "headerName": "Why this rep?", "flex": 3, "minWidth": 320, "tooltipField": "reason"},
+    {"field": "unusual_record", "hide": True},                            # the ML reason (tooltip)
     {"field": "_search", "hide": True},                                   # driven by the search box
     {"field": "_run", "hide": True, "filter": "agNumberColumnFilter"},    # forces a refresh per run
 ]
@@ -232,8 +238,14 @@ def queue_tab() -> html.Div:
             dbc.Col(dbc.InputGroup([dbc.InputGroupText("Group by"), dbc.Select(id="q-group", value="none", options=[
                 {"label": "None", "value": "none"}, {"label": "Tier", "value": "priority"},
                 {"label": "Rep", "value": "rep"}])], size="sm"), xs=6, md=3),
+            dbc.Col(dbc.InputGroup([dbc.InputGroupText("ML check"), dbc.Select(id="q-ml", value="all", options=[
+                {"label": "All leads", "value": "all"},
+                {"label": "⚠ Flagged as unusual", "value": "Unusual"}])], size="sm", className="ml-filter"),
+                    xs=12, md=4),
         ]),
-        html.Div("Click any row to see its score breakdown and routing explanation.", className="hint mb-2"),
+        html.Div(["Click any row to see its score breakdown and routing explanation. ",
+                  html.Span("⚠ Unusual", className="ml-pill"),
+                  " = flagged by our machine-learning check (hover it to see why)."], className="hint mb-2"),
         html.Div(id="group-wrap", style={"display": "none"}, children=dag.AgGrid(
             id="group-grid", columnDefs=[], rowData=[], className=GRID_THEME,
             defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -302,6 +314,8 @@ def capacity_tab() -> html.Div:
          "filter": "agNumberColumnFilter"},
         {"field": "utilization", "headerName": "Used %", "width": 100, "filter": "agNumberColumnFilter"},
         {"field": "available", "headerName": "Open Slots", "width": 110, "filter": "agNumberColumnFilter"},
+        {"field": "ml_flag", "headerName": "ML check", "width": 125, "cellRenderer": "MlFlag",
+     "tooltipField": "unusual_record"},
         {"field": "data_fixes", "headerName": "What we fixed in this row", "flex": 1.5, "minWidth": 220,
          "tooltipField": "data_fixes"},
     ]
@@ -312,6 +326,10 @@ def capacity_tab() -> html.Div:
             dbc.Col(dbc.InputGroup([dbc.InputGroupText("Sort"), dbc.Select(id="c-sort", value="most", options=[
                 {"label": "Most loaded", "value": "most"}, {"label": "Least loaded", "value": "least"},
                 {"label": "Most open slots", "value": "open"}])], size="sm"), xs=12, md=3),
+            dbc.Col(dbc.InputGroup([dbc.InputGroupText("ML check"), dbc.Select(id="c-ml", value="all", options=[
+                {"label": "All reps", "value": "all"},
+                {"label": "⚠ Flagged as unusual", "value": "Unusual"}])], size="sm", className="ml-filter"),
+                    xs=12, md=3),
         ]),
         dag.AgGrid(id="rep-grid", columnDefs=cols, rowData=[], className=GRID_THEME,
                    defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -354,6 +372,8 @@ def about_page() -> html.Div:
                     "It only adds a note for a person to check: scores, priorities and routes are never changed, "
                     "so every business rule still holds."], className="hint mb-2"),
             html.Div(id="ml-summary", className="ml-summary"),
+            html.P(["See them in context: ", html.B("Leads & Reps → ML check: ⚠ Flagged as unusual"),
+                    " (works on both the Lead Queue and Rep Capacity tabs)."], className="hint mb-2"),
             dbc.Row([
                 dbc.Col([html.H3("Most unusual leads", className="about-sub mb-2"), html.Div(id="ml-leads")], lg=7),
                 dbc.Col([html.H3("Most unusual reps", className="about-sub mb-2"), html.Div(id="ml-reps")], lg=5),
@@ -673,13 +693,15 @@ app.clientside_callback(
 # ======================================================================================
 @callback(Output("queue-grid", "filterModel"),
           Input("run-store", "data"), Input("q-search", "value"), Input("q-tier", "value"),
-          Input("q-region", "value"), Input("q-status", "value"), State("queue-grid", "filterModel"))
-def external_filters(store, search, tier, region, status, current):
+          Input("q-region", "value"), Input("q-status", "value"), Input("q-ml", "value"),
+          State("queue-grid", "filterModel"))
+def external_filters(store, search, tier, region, status, ml, current):
     """Turn the toolbar into AG Grid's filterModel. Changing it makes the grid fetch fresh rows.
     The hidden _run filter changes with every run, so the grid always refreshes after a run."""
     model = dict(current or {})
     for column, value, op in (("_search", (search or "").strip().lower(), "contains"), ("priority", tier, "equals"),
-                              ("region", region, "equals"), ("status", status, "equals")):
+                              ("region", region, "equals"), ("status", status, "equals"),
+                              ("ml_flag", ml, "equals")):
         if value and value != "all":
             model[column] = {"filterType": "text", "type": op, "filter": value}
         else:
@@ -729,13 +751,16 @@ def group_view(group, _store):
 # Callback: rep capacity table
 # ======================================================================================
 @callback(Output("rep-grid", "rowData"),
-          Input("run-store", "data"), Input("c-region", "value"), Input("c-seniority", "value"), Input("c-sort", "value"))
-def capacity_table(_store, region, seniority, sort):
+          Input("run-store", "data"), Input("c-region", "value"), Input("c-seniority", "value"), Input("c-sort", "value"),
+          Input("c-ml", "value"))
+def capacity_table(_store, region, seniority, sort, ml):
     _, reps = frames()
     if region and region != "all":
         reps = reps[reps["region"] == region]
     if seniority and seniority != "all":
         reps = reps[reps["seniority"] == seniority]
+    if ml and ml != "all":
+        reps = reps[reps["ml_flag"] == ml]
     column, ascending = {"most": ("utilization", False), "least": ("utilization", True),
                          "open": ("available", False)}[sort or "most"]
     return reps.sort_values([column, "load"], ascending=[ascending, ascending], kind="stable").to_dict("records")
