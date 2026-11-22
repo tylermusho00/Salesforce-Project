@@ -4,7 +4,7 @@ Merged GitHub `b65c145` and the subsequent `de05e6d` local-launcher update into 
 
 ## Verified
 
-- 353 tests passed in the separately installed Python 3.11 environment using `python -m pytest -q --benchmark-disable`. The dashboard's real pytest subprocess also passed all 353 cases and preserved the active run.
+- 358 tests passed in the separately installed Python 3.11 environment using `python -m pytest -q --benchmark-disable`. The dashboard's real pytest subprocess also passed all 358 cases and preserved the active run.
 - Sample and scale: all 50,100 saved per-lead decisions match the pre-edit baseline exactly. Conservation, capacity and Critical-to-Junior checks pass.
 - Dependencies installed from `.[dev,dashboard]`; `pip check` reports no broken requirements. Dash minimum is 3.1 for optional dynamic review controls, in both dependency manifests.
 - Preserved local matching modes, raw-value evidence, reserved suggestions, infinite paging, exact KPI display, UI copy cleanup and capacity scenarios.
@@ -20,3 +20,5 @@ Merged GitHub `b65c145` and the subsequent `de05e6d` local-launcher update into 
 This is readiness for the repository and competition demonstration, not certification of an unseen official submission rubric. The available Q&A PDF is practice material. Hosted Linux/Python 3.12–3.13 CI must still be confirmed on GitHub after pushing. The existing shared in-memory run model is a prototype limitation; no multi-user production isolation or live Salesforce connection is claimed. Salesforce CSVs remain mapping templates that require org record IDs.
 
 Local HANDOFF and historical council notes are preserved outside the submission commits. No generated CSVs, virtual environments or browser artifacts are included.
+
+Export follow-up: direct HTTP CSV attachments replace blob URLs, with explicit human-readable filenames, UTF-8 encoding and no-store headers. All four downloads were verified in Chromium; the menu matches the app typography and fits a 390-pixel viewport.

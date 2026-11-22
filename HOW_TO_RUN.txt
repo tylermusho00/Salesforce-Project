@@ -19,5 +19,5 @@ Without the scripts (any OS):
     pip install -r requirements.txt
     python -m app.main            then open http://127.0.0.1:8050
 
-Run the tests:  python -m pytest -q --benchmark-disable  (353 test cases)
+Run the tests:  python -m pytest -q --benchmark-disable  (358 test cases)
 More detail: README.md

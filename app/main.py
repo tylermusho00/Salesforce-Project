@@ -29,6 +29,8 @@ import dash_ag_grid as dag
 import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
+from flask import abort, send_file
+from werkzeug.utils import secure_filename
 
 from app import charts, test_runner
 from app.capacity_simulator import capacity_simulator
@@ -239,14 +241,16 @@ def page_header() -> html.Div:
                 ]),
             ]),
             dbc.DropdownMenu(label="Export", id="export-menu", disabled=True, className="export-menu", align_end=True, children=[
-                dbc.DropdownMenuItem("Routed leads (CSV)", id="exp-results"),
-                dbc.DropdownMenuItem("Salesforce update template (CSV, map IDs first)", id="exp-sf"),
-                dbc.DropdownMenuItem("Manager Review queue (CSV)", id="exp-review"),
-                dbc.DropdownMenuItem("Rep capacity (CSV)", id="exp-reps"),
+                dbc.DropdownMenuItem("Routed leads · CSV", id="exp-results", href="/exports/results.csv", external_link=True),
+                dbc.DropdownMenuItem([
+                    html.Span("Salesforce template · CSV"),
+                    html.Small("Map record IDs before importing", className="export-note"),
+                ], id="exp-sf", href="/exports/salesforce.csv", external_link=True),
+                dbc.DropdownMenuItem("Manager Review · CSV", id="exp-review", href="/exports/review.csv", external_link=True),
+                dbc.DropdownMenuItem("Rep capacity · CSV", id="exp-reps", href="/exports/reps.csv", external_link=True),
             ]),
             html.Button("Run tests", id="btn-tests", className="slds-btn tests-btn",
                         title="Open Tests and run the full automated suite"),
-            dcc.Download(id="download"),
         ]),
     ])
 
@@ -1513,27 +1517,31 @@ def _test_graphic(s: scenarios.Scenario):
 # ======================================================================================
 # Callback: CSV export
 # ======================================================================================
-@callback(Output("download", "data"),
-          Input("exp-results", "n_clicks"), Input("exp-sf", "n_clicks"), Input("exp-review", "n_clicks"),
-          Input("exp-reps", "n_clicks"), prevent_initial_call=True)
-def export(*_):
-    """The Salesforce file uses Data Loader column names (Id, OwnerId, *__c custom fields)."""
-    if STATE.result is None:
-        return no_update
-    results, reps = frames()
-    results = results.drop(columns=["_search", "_flag"])
-    name = STATE.result.dataset
-    match ctx.triggered_id:
-        case "exp-results":
-            return dcc.send_data_frame(results.to_csv, f"lead_routing_{name}.csv", index=False)
-        case "exp-sf":
-            return dcc.send_data_frame(salesforce_frame(results).to_csv, f"salesforce_mapping_template_{name}.csv", index=False)
-        case "exp-review":
-            return dcc.send_data_frame(results[results["status"] == "Manager Review"].to_csv,
-                                       f"manager_review_{name}.csv", index=False)
-        case "exp-reps":
-            return dcc.send_data_frame(reps.to_csv, f"rep_capacity_{name}.csv", index=False)
-    return no_update
+@server.get("/exports/<kind>.csv")
+def export_csv(kind):
+    """Serve named attachments directly so download names survive browser preview environments."""
+    prefixes = {"results": "lead_routing", "salesforce": "salesforce_mapping_template",
+                "review": "manager_review", "reps": "rep_capacity"}
+    if kind not in prefixes:
+        abort(404)
+    result, _ = STATE.snapshot()
+    if result is None:
+        return "Run a dataset or upload before exporting.", 409
+    results = results_frame(result)
+    if kind == "reps":
+        table = reps_frame(result)
+    elif kind == "salesforce":
+        table = salesforce_frame(results)
+    elif kind == "review":
+        table = results[results["status"] == "Manager Review"]
+    else:
+        table = results
+    name = secure_filename(result.dataset) or "custom"
+    response = send_file(io.BytesIO(table.to_csv(index=False).encode("utf-8-sig")),
+                         mimetype="text/csv; charset=utf-8", as_attachment=True,
+                         download_name=f"{prefixes[kind]}_{name}.csv", max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

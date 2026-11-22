@@ -26,6 +26,10 @@ summary { cursor: pointer; }
 .proof-row > div { min-width: 0; }
 .proof-name, .proof-error { overflow-wrap: anywhere; }
 .review-any-dd { min-width: 0; }
+.export-menu .dropdown-menu { width: 260px; max-width: calc(100vw - 24px); padding: 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); font-family: var(--font); font-size: var(--text-body); }
+.export-menu .dropdown-item { padding: 10px 12px; border-radius: 2px; color: var(--text); white-space: normal; line-height: 1.4; }
+.export-menu .dropdown-item:hover, .export-menu .dropdown-item:focus-visible { color: var(--link); background: var(--surface-soft); }
+.export-note { display: block; margin-top: 2px; font-size: var(--text-sm); color: var(--text-weaker); }
 .test-card details .test-blurb:first-of-type { margin-top: 12px; }
 .test-blurb { border-left: 0; padding-left: 0; }
 .test-blurb-label { text-transform: none; letter-spacing: normal; font-weight: 500; color: var(--text-weak); }

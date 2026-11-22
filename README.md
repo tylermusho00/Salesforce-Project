@@ -234,7 +234,7 @@ Then run `pytest -q`.
 
 ## Tests
 
-The current suite has **353 passing tests**. See [submission verification](docs/SUBMISSION_VERIFICATION.md) and [UI verification](docs/UI_VERIFICATION.md) for the latest browser checks and [integration validation](docs/INTEGRATION_VALIDATION.md) for the earlier merge comparison.
+The current suite has **358 passing tests**. See [submission verification](docs/SUBMISSION_VERIFICATION.md) and [UI verification](docs/UI_VERIFICATION.md) for the latest browser checks and [integration validation](docs/INTEGRATION_VALIDATION.md) for the earlier merge comparison.
 
 | File | What it proves |
 |---|---|
@@ -251,7 +251,7 @@ The current suite has **353 passing tests**. See [submission verification](docs/
 | `test_performance.py` | the optimised router makes exactly the same choices as a slow reference router |
 | `test_dashboard.py` | dashboard callbacks: proof panel, strict toggle, review suggestions, trace-a-lead picker |
 
-All 353 test cases can be run from the dashboard's **Tests** page, which shows what each one proves.
+All 358 test cases can be run from the dashboard's **Tests** page, which shows what each one proves.
 
 ## Pushing this folder to GitHub
 
