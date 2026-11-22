@@ -60,7 +60,7 @@ Five pages, each with its own address:
 | **Leads & Reps** `/leads` | Lead Queue · Rep Capacity tabs | Drill down: search, filter, group, click a lead for its score breakdown |
 | **Manager Review** `/review` | Leads waiting for a manager · the selected lead's details · its **3 closest reps with room** (traits ✓/✗, load) · **Assign** buttons and a pick-any-rep list | Who needs a decision, and who's the best person left to take it? |
 | **Tests** `/tests` | Runs the real **pytest** suite live and groups the results: ties, rules that must never break, edge cases & unknown values, Manager Review, scale | Is it really working, or are we just guessing? |
-| **About** `/about` | How it works (Clean → Score → Route) · Perfect Matches · Leads Routed per Second · Data Quality | How good and how fast is it, and what did we clean up? |
+| **About** `/about` | How it works (Clean → Score → Route → ML double-check) · Perfect Matches · Leads Routed per Second · **Unusual records found by machine learning** · Data Quality | How good and how fast is it, and what did we clean up? |
 
 Every "View Report" link opens the page and tab with the details; the header search box filters
 the lead queue on the Leads & Reps page. **Demo script (≈90 s):** Run Sample → read the four big
@@ -91,6 +91,7 @@ capacity), updates every number on every page, and shows up in the exports as `a
 │   ├── explain.py         turns every decision and data fix into a plain-English sentence
 │   ├── pipeline.py        STEP 4  runs everything, times it, computes KPIs
 │   ├── review.py          Manager Review: closest reps for a waiting lead, assign by hand
+│   ├── anomaly.py         machine learning: flags unusual leads/reps (Isolation Forest), never changes a route
 │   ├── export.py          results → tables / CSV (incl. Salesforce Data Loader file)
 │   └── cli.py             the `leadrouter` command
 ├── tests/                 pytest: unit, property-based (hypothesis), benchmark
@@ -99,6 +100,27 @@ capacity), updates every number on every page, and shows up in the exports as `a
 ```
 
 Start reading at `pipeline.py` (the big picture), then `routing.py` (the interesting part).
+
+## Machine learning: unusual-record detection
+
+`lead_router/anomaly.py` uses scikit-learn's **Isolation Forest**, an unsupervised model (it needs no
+"right answers" to learn from). It builds random trees that keep splitting the data; ordinary rows take
+many splits to isolate, odd rows only a few. The rows isolated fastest are flagged, each with a
+plain-English reason (the feature furthest from normal):
+
+| Looks at | Example flag |
+|---|---|
+| Lead company size (log scale), number of blank fields, number of values that needed cleaning | "Company size of 10,000,000,000 employees is far above normal (typical: 629). Check it's not a typo." |
+| Rep max capacity vs. others of the same seniority, number of values fixed | "Max capacity of 10 is much higher than a typical Manager (7)." |
+
+On the 50,000-lead file it flags 291 leads (0.6%) and 40 reps in about 0.9 s, including all 73 companies
+claiming 10 billion employees. **It never changes a score, priority or route**: it only adds a note
+(About page, lead detail panel, Manager Review panel, and the `unusual_record` export column).
+`test_ml_never_changes_a_route` runs the 50k file with the model on and off and checks every assignment is identical.
+
+Why not a model that predicts which leads will close? The data has no won/lost outcomes, so it could only
+learn our own scoring rules back. With Salesforce closed-deal history, that is the natural next step,
+behind the same rules.
 
 ## The algorithm in one page
 
@@ -206,6 +228,7 @@ Then run `pytest -q`.
 |---|---|
 | `test_business_scenarios.py` | **10 plain-language promises** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md) |
 | `test_ties_and_edge_cases.py` | **who goes first on equal scores** (tier → score → file row; last open slot), how equal reps take turns, and edge cases: size formats, unknown VIP, a completely blank lead, "NA" = North America, glued regions, unreadable seniority, bad capacities, messy headers |
+| `test_anomaly.py` | Machine learning: catches all 73 "10 billion employee" companies, gives a reason, same flags every run, and **never changes a route** (50k file run with the model on and off) |
 | `test_review.py` | Manager Review: closest reps ranked by traits, no Juniors for Critical, full reps skipped, assigning updates every number, rules can't be broken by hand |
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
@@ -215,7 +238,7 @@ Then run `pytest -q`.
 | `test_properties.py` | 150 batches of random garbage never crash the pipeline or break the rules |
 | `test_benchmark.py` | 50,000 leads finish under 10 s |
 
-All 210 test cases (121 tests) can be run from the dashboard's **Tests** page, which shows what each one proves.
+All 216 test cases (127 tests) can be run from the dashboard's **Tests** page, which shows what each one proves.
 
 ## Pushing this folder to GitHub
 

@@ -333,6 +333,8 @@ def about_page() -> html.Div:
                                "VIP referrals are always Critical."),
             step("3", "Route", "Most urgent first, to the best-matching rep with room. Critical → Senior → Manager, "
                                "never Junior. Equal reps share work evenly."),
+            step("4", "Double-check (ML)", "A machine-learning model flags records that look unusual, like a company "
+                                           "with 10 billion employees, so a person can check them. It never changes a route."),
         ]),
         html.P("Want proof? Open the Tests tab: it runs our full pytest suite live.", className="hint about-proof"),
     ])
@@ -343,6 +345,21 @@ def about_page() -> html.Div:
             dbc.Col([html.H3("Representatives", className="about-sub mb-2"), html.Div(id="dq-reps")], lg=6),
         ])),
     ])
+    unusual = html.Div(className="component", children=[
+        html.Div(className="component-head", children=html.H2(
+            "Unusual records, found by machine learning", className="component-title")),
+        html.Div(className="component-body about-quality", children=[
+            html.P(["An ", html.B("Isolation Forest"), " model (scikit-learn) learns what normal leads and reps look like "
+                    "and flags the rows that stand out most, each with the reason. It needs no training answers. "
+                    "It only adds a note for a person to check: scores, priorities and routes are never changed, "
+                    "so every business rule still holds."], className="hint mb-2"),
+            html.Div(id="ml-summary", className="ml-summary"),
+            dbc.Row([
+                dbc.Col([html.H3("Most unusual leads", className="about-sub mb-2"), html.Div(id="ml-leads")], lg=7),
+                dbc.Col([html.H3("Most unusual reps", className="about-sub mb-2"), html.Div(id="ml-reps")], lg=5),
+            ]),
+        ]),
+    ])
     return html.Div(className="page-stack", children=[
         how,
         html.Div(id="about-data", style={"display": "none"}, className="page-stack", children=[
@@ -350,6 +367,7 @@ def about_page() -> html.Div:
                 dbc.Col(metric("matches", "Perfect Matches", "queue", "Lead Queue"), xs=12, md=6),
                 dbc.Col(metric("speed", "Leads Routed per Second", None, None), xs=12, md=6),
             ]),
+            unusual,
             quality,
         ]),
     ])
@@ -484,6 +502,7 @@ CHART_IDS = ["ch-tiers", "ch-region", "ch-capacity", "ch-fullness"]
     *[Output(f"m-{k}", "children") for k in METRIC_KEYS], *[Output(f"m-{k}-cap", "children") for k in METRIC_KEYS],
     *[Output(c, "figure") for c in CHART_IDS],
     Output("review-count", "children"), Output("review-grid", "rowData"), Output("dq-leads", "children"), Output("dq-reps", "children"),
+    Output("ml-summary", "children"), Output("ml-leads", "children"), Output("ml-reps", "children"),
     Input("run-store", "data"),
 )
 def render(_store):
@@ -493,7 +512,7 @@ def render(_store):
         return ({}, {"display": "none"}, {"display": "none"}, {"display": "none"},
                 "No data yet · Viewing as Sales Operations",
                 *["—"] * len(METRIC_KEYS), *[""] * len(METRIC_KEYS), *[blank] * len(CHART_IDS),
-                "", [], None, None)
+                "", [], None, None, None, None, None)
 
     m, (results, reps) = r.metrics, frames()
     lq, rq = r.lead_quality, r.rep_quality
@@ -541,7 +560,36 @@ def render(_store):
     return ({"display": "none"}, {}, {}, {}, as_of,
             *[metrics[k][0] for k in METRIC_KEYS], *[metrics[k][1] for k in METRIC_KEYS],
             *figures,
-            f"({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq))
+            f"({m['overflow']:,})", review_rows, _quality_table(lq), _quality_table(rq), *_unusual_view(r))
+
+
+def _unusual_view(r) -> tuple:
+    """Summary line + the most unusual leads and reps the ML model flagged (lead_router/anomaly.py)."""
+    leads = sorted((l for l in r.leads if l.anomaly), key=lambda l: -l.anomaly_score)
+    reps = sorted((x for x in r.reps if x.anomaly), key=lambda x: -x.anomaly_score)
+    summary = html.P([html.B(f"{len(leads):,} leads"), f" of {len(r.leads):,} and ", html.B(f"{len(reps):,} reps"),
+                      f" of {len(r.reps):,} look unusual (checked in {r.timings.get('anomaly', 0):.2f} s). "
+                      "Flagged leads still went through the normal rules. The note also appears in each lead's "
+                      "detail panel and in the export (column unusual_record)."], className="mb-2")
+
+    def table(rows, head):
+        if not rows:
+            return html.P("Nothing unusual found.", className="hint")
+        return dbc.Table([html.Thead(html.Tr([html.Th(h) for h in head])), html.Tbody(rows)],
+                         striped=True, hover=True, size="sm", className="dq-table")
+    lead_rows = [html.Tr([html.Td(l.id), html.Td(l.company_name), html.Td(l.anomaly)]) for l in leads[:12]]
+    rep_rows = [html.Tr([html.Td(f"{x.name} ({x.id})"), html.Td(x.anomaly)]) for x in reps[:8]]
+    return summary, table(lead_rows, ["Lead", "Company", "Why it stands out"]), table(rep_rows, ["Rep", "Why it stands out"])
+
+
+def _anomaly_note(lead):
+    """A yellow note when the ML model thinks this lead looks unusual."""
+    if not lead.anomaly:
+        return None
+    return html.Div(className="ml-note mb-3", children=[
+        html.B("⚠ Unusual record (machine learning): "), lead.anomaly,
+        html.Div("Routed by the normal rules; this is only a prompt to double-check the data.", className="cand-sub"),
+    ])
 
 
 def _quality_table(report) -> list:
@@ -720,6 +768,7 @@ def lead_detail(selection):
             html.Span(lead.priority.value, className=f"slds-badge tier-{lead.priority.value.lower()} me-2"),
             html.Span(decision.status.value, className="slds-badge " + ("status-assigned" if decision.rep_id else "status-review")),
         ]),
+        _anomaly_note(lead),
         html.H6("Why this priority?"),
         html.Table(className="detail-table mb-1 w-100", children=html.Tbody(
             [row(label, points(p)) for label, p in lead.score_reasons] + [row(html.B("Total"), html.B(f"{lead.score} pts"))])),
@@ -867,6 +916,7 @@ def review_panel(selection, _store):
             html.P("Why it's waiting", className="review-label"),
             html.P(decision.reason, className="mb-0"),
         ]),
+        _anomaly_note(lead),
         html.Table(className="detail-table w-100 mb-3", children=html.Tbody(
             [html.Tr([html.Td(k), html.Td(v)]) for k, v in facts])),
         html.P(f"Closest reps who can take it ({len(choices):,} reps have room and are allowed)",

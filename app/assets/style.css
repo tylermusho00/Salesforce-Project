@@ -223,7 +223,7 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 
 /* ---------- About page ---------- */
 .page-stack { display: flex; flex-direction: column; gap: var(--gap); }
-.about-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 16px 20px 4px; }
+.about-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding: 16px 20px 4px; }
 .about-step { display: flex; gap: 14px; align-items: flex-start; }
 .about-step-n { width: 40px; height: 40px; border-radius: 50%; background: var(--brand); color: #fff; font-weight: 700;
   font-size: 18px; display: flex; align-items: center; justify-content: center; flex: none; margin: 0; }
@@ -284,3 +284,8 @@ body { margin: 0; font-family: var(--font); color: var(--text); font-size: 13px;
 .component-body > details { padding: 4px 4px 8px; }
 .component-body > details summary { cursor: pointer; color: var(--brand); font-size: 14px; }
 .score-badge { font-size: 12px; font-weight: 700; border: 1px solid #C9C9C9; border-radius: 12px; padding: 2px 8px; color: #181818; }
+
+/* ---------- machine learning notes ---------- */
+.ml-note { background: #FEF7E5; border-left: 4px solid #DD7A01; border-radius: 4px; padding: 8px 12px; font-size: 13px; }
+.ml-summary { font-size: 14px; }
+@media (max-width: 1200px) { .about-steps { grid-template-columns: repeat(2, 1fr); } }

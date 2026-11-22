@@ -1,6 +1,6 @@
 # How we know Lead Router works
 
-Lead Router has **210 automated test cases** (121 tests) written with **pytest**, the standard testing tool for Python.
+Lead Router has **216 automated test cases** (127 tests) written with **pytest**, the standard testing tool for Python.
 Most of them check small technical details. This page covers the **business scenario tests**
 (`tests/test_business_scenarios.py`): each one checks a promise a sales manager would care about,
 in words anyone can follow.
@@ -205,6 +205,19 @@ Same file. The rule: never crash, never drop a lead, always explain.
 | Assigning updates everything | The lead leaves review, the rep's load goes up, every number recounts, the export says "Manager" |
 | No overfilling | A full rep can't be chosen |
 | Only waiting leads | A lead already with a rep can't be reassigned from here |
+
+## Machine learning: unusual records
+
+`tests/test_anomaly.py`. The Isolation Forest model only adds notes; these tests prove it.
+
+| Test | What it proves |
+|---|---|
+| Never changes a route | The 50k file is run with the model on and off: all 50,000 leads get the same rep, score and priority |
+| Catches impossible sizes | All 73 leads claiming 10,000,000,000 employees are flagged; under 1% of leads are flagged overall |
+| Gives a reason | Each flag says what stands out, e.g. "Company size of 10,000,000,000 employees is far above normal" |
+| Odd rep capacities | A Senior with 400 slots among Seniors with about 20 is flagged |
+| Repeatable | Same data → same flags (fixed seed) |
+| Too little data | Under 20 rows: it doesn't guess |
 
 ## The other tests
 

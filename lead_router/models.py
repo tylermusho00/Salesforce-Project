@@ -101,6 +101,9 @@ class Lead:
     priority: Priority = Priority.LOW
     score_reasons: list[tuple[str, int]] = field(default_factory=list)  # [(reason, points), ...]
     explanation: str = ""
+    # Filled in by anomaly.flag_leads() (machine learning). None = nothing unusual.
+    anomaly: str | None = None
+    anomaly_score: float = 0.0
 
 
 @dataclass(slots=True)
@@ -115,6 +118,8 @@ class Rep:
     max_capacity: int           # the most they may ever hold
     flags: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    anomaly: str | None = None   # set by anomaly.flag_reps() (machine learning)
+    anomaly_score: float = 0.0
 
     @property
     def available(self) -> int:

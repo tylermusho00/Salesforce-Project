@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.2",      # reading CSVs, building result tables
     "rapidfuzz>=3.9",   # typo matching ("Asa-Pacific" -> "Asia-Pacific")
+    "scikit-learn>=1.5",  # machine learning: flags unusual records (lead_router/anomaly.py)
     "pyyaml>=6.0",      # reading config/rules.yaml
 ]
 

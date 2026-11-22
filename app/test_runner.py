@@ -111,6 +111,21 @@ CATALOG: list[tuple[str, str, list[tuple[str, str, str]]]] = [
         ("test_manager_cannot_overfill_a_rep", "A manager can't overfill a rep", ""),
         ("test_only_waiting_leads_can_be_assigned_by_hand", "Only waiting leads can be reassigned", ""),
     ]),
+    ("Machine learning: unusual records",
+     "An Isolation Forest model (scikit-learn) flags records that look wrong so a person can check them. "
+     "It only adds a note: these tests prove it never changes a route.", [
+        ("test_ml_never_changes_a_route", "The model never changes a route",
+         "The 50k file is run with the model on and off: all 50,000 leads get the same rep, score and priority."),
+        ("test_every_ten_billion_employee_company_is_caught", "It catches impossible company sizes",
+         "All 73 leads claiming 10,000,000,000 employees are flagged, while under 1% of leads are flagged overall."),
+        ("test_an_impossible_company_size_is_flagged_with_a_reason", "Each flag comes with a plain reason",
+         "\"Company size of 10,000,000,000 employees is far above normal…\""),
+        ("test_a_rep_with_a_strange_capacity_is_flagged", "Odd rep capacities are flagged",
+         "A Senior with 400 slots among Seniors with about 20 stands out."),
+        ("test_same_data_same_flags", "Same data → same flags", "The model uses a fixed seed, so results repeat."),
+        ("test_too_few_rows_to_learn_from_flags_nothing", "Too little data → no guesses",
+         "With under 20 rows it doesn't try to learn what's normal."),
+    ]),
     ("Scale and speed", "", [
         ("test_7_fifty_thousand_leads_in_seconds", "50,000 leads in seconds",
          "Clean, score and route the full file."),
