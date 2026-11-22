@@ -7,9 +7,9 @@ Lightning-style dashboard to present the results. **No lead is ever dropped.**
 
 | Scale dataset: 50,000 leads × 1,600 reps | Result |
 |---|---|
-| Time, end to end | about 1.3 seconds, median of 5 runs (≈ 38,000 leads/second); see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
+| Time, end to end | 4.48 seconds in the merge-validation session (median of 5; earlier run: 1.30 s); see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | Assigned / Manager Review | 99.8% / 0.2% (sample: 99% / 1%) |
-| Strict mode (3 of 3 traits only) | 94.0% assigned (sample: 19%) |
+| Strict mode (3 of 3, with the documented unknown-industry exception) | 94.0% assigned (sample: 19%) |
 | Critical leads handled by a Senior | 98.6% (the rest by Managers; 0 Critical leads waiting) |
 | Critical leads given to a Junior | 0 |
 | Reps over their max capacity | 0 |
@@ -60,10 +60,10 @@ the run buttons, and white report components on the blue-gray dashboard canvas.
 
 | Row | Components | The question it answers |
 |---|---|---|
-| Header | Run Sample / Run Scale / Reset · **Matching: Best available (3→2→1) / Strict (3 of 3)** · **Trace a messy lead** · upload · export | Run it live; show the brief's strict rule next to ours; follow one lead CSV → rep |
+| Header | **Run Tests** · Run Sample / Run Scale / Reset · **Matching: Best available (3→2→1) / Strict (3 of 3)** · **Trace a messy lead** · upload · export | Run it live; show the brief's strict rule next to ours; follow one lead CSV → rep |
 | 1 | Leads by Priority Tier **vs the 10/20/40/30 reference** · Lead Routing Funnel · Leads Assigned / Waiting in Manager Review / **Critical Leads Waiting** | How many leads, how urgent (and why the split differs), how many found an owner? |
-| 2 | Leads by Region · Where Leads Went (by Priority) · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
-| 3 | Critical → Senior % · Distribution Fairness · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
+| 2 | Leads by Region · Where Leads Went (by Priority) · Assigned vs. Manager Review · Manager Review by Reason | Where is the work, who got it, and why didn't the rest get placed? |
+| 3 | Critical → Senior % · Distribution Fairness · Perfect Matches · Leads per Second · Team Capacity Used · Messy Values Auto-Fixed | The numbers to say out loud in a demo |
 | Rules Check | Critical→Junior 0 · over capacity 0 · rows in = rows out · every row once · run fingerprint · time per stage | Proof, not promises: the safety rules, input = output, a reset gives the identical run, which stage is slowest |
 | 4 | Capacity Used by Seniority · Reps by % Full | Is the team balanced? Are Managers held in reserve? |
 | Details | Lead Queue (VIP-unknown filter) · Manager Review (**suggested action** per lead, Critical first) · Rep Capacity · Data Quality (**every raw value found → what we used**) | Drill down: search, filter, group, click a lead for its score breakdown |
@@ -207,8 +207,11 @@ Then run `pytest -q`.
 
 ## Tests
 
+The merged suite has **234 passing tests**. See [integration validation](docs/INTEGRATION_VALIDATION.md) for the comparison with the pre-merge version.
+
 | File | What it proves |
 |---|---|
+| `test_business_scenarios.py` | **8 scenario cards / 11 pytest checks** (no lead lost, no Junior gets Critical, nobody overloaded, VIP first, messy spellings understood, fair sharing, 50k in seconds, missing data handled). Explained in [docs/TESTING.md](docs/TESTING.md), and runnable from the dashboard's **✓ Run Tests** button |
 | `test_cleaning.py` | aliases, casing, typos, blanks, junk, number parsing, duplicates, rep capacity fixes |
 | `test_scoring.py` | every tier boundary, every matrix row, VIP override, missing fields |
 | `test_routing.py` | Junior never gets Critical, Senior before Manager, capacity never exceeded, even split, overflow reasons, nothing dropped |

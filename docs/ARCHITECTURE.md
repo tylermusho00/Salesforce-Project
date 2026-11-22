@@ -94,3 +94,11 @@ capacity"**. C is a Junior, so it is never offered a Critical lead, even when it
 | **total** | **~1.3 s** | median of 5 runs; before/after and method in [PERFORMANCE.md](PERFORMANCE.md) |
 
 Run `pytest tests/test_benchmark.py --benchmark-only` to measure on your machine.
+
+## Combined-version validation (2026-11-21)
+
+The combined suite has **234 passing tests**, including the business scenarios and dashboard
+integration regressions. Routing decisions, cleaned data, reports and metrics match the pre-merge
+version for sample and scale; explanation wording is intentionally shorter. See
+[INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). The earlier ~1.3 s timing above is historical;
+the merged version measured 4.48 s in this validation session, with machine load affecting timings.

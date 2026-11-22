@@ -254,3 +254,22 @@ def test_review_lead_drawer_shows_the_suggestion():
     text = text_of(body)
     assert "Suggested next step" in text and row["suggested_action"] in text
     assert dashboard.lead_detail_view("no-such-lead") is None
+
+
+def test_assigned_drawer_retains_rep_and_trait_evidence_with_short_explanation():
+    result = show(sample())
+    decision = next(a for a in result.assignments if a.rep_id)
+    body, _ = dashboard.lead_detail_view(decision.lead_id)
+    text = text_of(body)
+    assert decision.rep_name in text
+    assert all(label in text for label in ["Region", "Language", "Industry", "Workload"])
+    assert "of" in text and "leads" in text
+
+
+def test_business_tests_preserve_active_strict_run():
+    result = show(sample(min_traits=3))
+    run_id = STATE.run_id
+    panel = dashboard.run_tests(1)
+    assert "8 of 8 checks passed" in text_of(panel)
+    assert STATE.result is result and STATE.run_id == run_id
+    assert "Strict" in dashboard.render()["as_of"]

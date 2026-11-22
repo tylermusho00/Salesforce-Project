@@ -10,8 +10,8 @@ Layout, top to bottom (mirrors a Lightning dashboard page):
                     upload, export
     canvas          white components on a blue-gray background:
                       row 1  Tiers vs Reference | Lead Routing Funnel | Assigned + Manager Review + Critical Waiting
-                      row 2  Leads by Region | Where Leads Went | Manager Review by Reason
-                      row 3  five big numbers: Critical→Senior, fairness, speed, utilization, values auto-fixed
+                      row 2  Leads by Region | Who Got the Leads | Assigned vs Review | Review Reasons
+                      row 3  six big numbers: Critical→Senior, fairness, perfect matches, speed, utilization, values auto-fixed
                       row 4  Rules Check: the rules proven on this run + time per stage
                       row 5  Capacity Used by Seniority | Team Capacity
     details         Lightning tabs: Lead Queue, Manager Review, Rep Capacity, Data Quality
@@ -36,6 +36,7 @@ import pandas as pd
 from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from app import charts
+from lead_router import scenarios
 from app.grid_server import rows_for_request
 from lead_router.cleaning import LEAD_COLUMNS, LEAD_REQUIRED, REP_COLUMNS, REP_REQUIRED
 from lead_router.config import dataset_paths
@@ -238,6 +239,8 @@ def page_header() -> html.Div:
                 dbc.DropdownMenuItem("Manager Review queue (CSV)", id="exp-review"),
                 dbc.DropdownMenuItem("Rep capacity (CSV)", id="exp-reps"),
             ]),
+            html.Button("✓ Run Tests", id="btn-tests", className="slds-btn tests-btn",
+                        title="Run the business scenario checks and see the results"),
             dcc.Download(id="download"),
         ]),
     ])
@@ -269,14 +272,16 @@ def canvas() -> html.Div:
             metric("critwait", "Critical Leads Waiting", "review", "Manager Review", small=True),
         ]), 3, 6),
         # Row 2
-        col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 4, 6),
-        col(component("Where Leads Went (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 4, 6),
-        col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 4),
-        # Row 3: five big numbers, equal widths (nested row so they share one line)
+        col(component("Leads by Region", chart("ch-region"), "queue", "Prioritized Lead Queue", "region"), 3, 6),
+        col(component("Who Got the Leads (by Priority)", chart("ch-destination"), "capacity", "Rep Capacity", "dest"), 3, 6),
+        col(component("Assigned vs. Manager Review", chart("ch-split"), "review", "Manager Review", "split"), 3, 6),
+        col(component("Manager Review by Reason", chart("ch-reasons"), "review", "Manager Review", "reasons"), 3, 6),
+        # Row 3: six big numbers, equal widths (nested row so they share one line)
         dbc.Col(xs=12, children=dbc.Row(className="canvas-grid", children=[
             dbc.Col(metric("critical", "Critical Leads to Seniors", "queue", "Prioritized Lead Queue"),
                     xs=12, md=6, lg=True),
             dbc.Col(metric("fairness", "Distribution Fairness", "capacity", "Rep Capacity"), xs=12, md=6, lg=True),
+            dbc.Col(metric("matches", "Perfect Matches", "queue", "Prioritized Lead Queue"), xs=12, md=6, lg=True),
             dbc.Col(metric("speed", "Leads Routed per Second", "quality", "Data Quality"), xs=12, md=4, lg=True),
             dbc.Col(metric("util", "Team Capacity Used", "capacity", "Rep Capacity"), xs=12, md=4, lg=True),
             dbc.Col(metric("fixed", "Messy Values Auto-Fixed", "quality", "Data Quality"), xs=12, md=4, lg=True),
@@ -443,6 +448,21 @@ def details() -> html.Div:
         ]))
 
 
+def tests_modal() -> dbc.Modal:
+    """The 'Run Tests' panel: runs the business scenario checks (lead_router/scenarios.py, the same
+    code pytest runs) and shows one card per check."""
+    return dbc.Modal(id="tests-modal", size="xl", scrollable=True, is_open=False, children=[
+        dbc.ModalHeader(dbc.ModalTitle("Is Lead Router working correctly?")),
+        dbc.ModalBody(dcc.Loading(type="circle", color="#0176D3", children=html.Div(
+            id="tests-body", className="tests-body"))),
+        dbc.ModalFooter([
+            html.Span("These are the same checks our automated pytest suite runs on every change.", className="hint me-auto"),
+            html.Button("↻ Run again", id="tests-again", className="slds-btn"),
+            html.Button("Close", id="tests-close", className="slds-btn brand"),
+        ]),
+    ])
+
+
 def layout() -> html.Div:
     return html.Div([
         global_header(),
@@ -459,6 +479,8 @@ def layout() -> html.Div:
         dcc.Store(id="up-leads-store"),
         dcc.Store(id="up-reps-store"),
         dcc.Store(id="scroll-done"),  # dummy output for the search-scroll callback
+        dcc.Store(id="tests-trigger"),  # bumps when the tests should (re)run
+        tests_modal(),
     ])
 
 
@@ -536,9 +558,9 @@ def run_or_reset(_s, _sc, _r, _u, up_leads, up_reps, mode=MODE_BEST):
 # ======================================================================================
 # Callback: redraw the whole dashboard after a run or reset
 # ======================================================================================
-METRIC_KEYS = ["assigned", "review", "critwait", "critical", "fairness", "speed", "util", "fixed"]
+METRIC_KEYS = ["assigned", "review", "critwait", "critical", "fairness", "matches", "speed", "util", "fixed"]
 CHART_IDS = ["ch-tiers", "ch-funnel", "ch-region", "ch-destination", "ch-reasons", "ch-capacity", "ch-util",
-             "ch-timings"]
+             "ch-timings", "ch-split"]
 # Everything render() writes, by name. Callers (and tests) get a dict with these keys.
 RENDER_OUTPUTS = {
     "empty_style": Output("empty-state", "style"), "canvas_style": Output("canvas", "style"),
@@ -605,18 +627,19 @@ def render(_store=None) -> dict[str, Any]:
         "util": (f"{m['utilization']}%", f"{m['load_total']:,} of {m['capacity_total']:,} slots · "
                                          f"{m['capacity_violations']} over capacity"),
         "fixed": (f"{lq.fixed + rq.fixed:,}", f"{m['imputed_rate']}% of leads had a gap · 0 dropped"),
-        "fairness": (f"{m['fairness_during_run']:.3f}", "Jain index · 1.000 = perfectly even"),
+        # Share of assigned leads whose rep matches region, language AND industry
+        "matches": (f"{100 * by_traits[3] / max(m['assigned'], 1):.1f}%",
+                    f"rep has the same region, language & industry"),
     }
+
+    metrics["fairness"] = (f"{m['fairness_during_run']:.3f}", "Jain index · 1.000 = perfectly even")
 
     # --- charts
     reasons = m["overflow_reasons"]
     stages = [
-        ("Rows uploaded", lq.rows_in),
-        ("Unique leads", m["total_leads"]),
-        ("Routable", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)),
-        ("A trait matched", m["total_leads"] - reasons.get(OverflowReason.MISSING_ROUTING_DATA.value, 0)
-                              - reasons.get(OverflowReason.NO_MATCH.value, 0)),
-        ("Assigned to a rep", m["assigned"]),
+        ("Leads uploaded", lq.rows_in),
+        ("Kept after cleanup", m["total_leads"]),
+        ("Given to a rep", m["assigned"]),
     ]
     region_counts = results["region"].value_counts().reindex(REGIONS, fill_value=0)
     region_counts = region_counts[region_counts > 0]
@@ -635,7 +658,8 @@ def render(_store=None) -> dict[str, Any]:
         "ch-destination": charts.destination_columns(results),
         "ch-reasons": reason_fig,
         "ch-capacity": charts.capacity_by_seniority(reps),
-        "ch-util": charts.utilization_histogram(reps),
+        "ch-util": charts.rep_fullness(reps),
+        "ch-split": charts.assigned_vs_review(m["assigned"], m["overflow"]),
         "ch-timings": charts.stage_timings(r.timings, timed),
     }
 
@@ -1035,6 +1059,7 @@ def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | N
     route = html.Div(id="trace-route", children=[
         html.H6("Why this rep?" if decision.rep_id else "Why is it waiting for a manager?"),
         html.P(decision.reason, className="plain-explanation mb-3"),
+        _match_table(lead, decision),
         *suggestion,
     ])
     clean = html.Div(id="trace-clean", children=[html.H6("What we cleaned up in this lead's data"), fix_table])
@@ -1055,6 +1080,115 @@ def lead_detail_view(lead_id: str, traced: bool = False) -> tuple[list, str] | N
                        className="hint mb-2")
         return [trace_trail(lead, decision, fixes), intro, badges, *sections], title
     return [trace_trail(lead, decision, fixes), badges, *sections], title
+
+
+def _match_table(lead, decision):
+    """Lead vs. assigned rep, trait by trait, with a check or cross: the evidence behind the choice."""
+    rep = next((r for r in STATE.result.reps if r.id == decision.rep_id), None) if decision.rep_id else None
+    if rep is None:
+        return html.Div(className="mb-3")
+    lead_regions = [r for r in (lead.region, *lead.alt_regions) if r]
+    checks = [
+        ("Region", lead.region or "Unknown", rep.region or "-", bool(rep.region and rep.region in lead_regions)),
+        ("Language", lead.language or "Unknown", rep.language or "-", bool(rep.language and rep.language == lead.language)),
+        ("Industry", lead.industry or "Unknown", rep.industry or "None listed",
+         bool(rep.industry) and rep.industry == lead.industry),
+        ("Seniority", f"{lead.priority.value} lead", rep.seniority.value, True),
+        ("Workload", "", f"{rep.current_capacity} of {rep.max_capacity} leads", True),
+    ]
+    def mark(trait, ok):
+        if trait == "Industry" and lead.industry is None:
+            return html.Span("–", title="The lead's industry isn't known")
+        return html.Span("✓", className="match-yes") if ok else html.Span("✗", className="match-no")
+    return html.Table(className="detail-table match-table mb-3 w-100", children=[
+        html.Thead(html.Tr([html.Th(""), html.Th("Lead"), html.Th(rep.name), html.Th("")])),
+        html.Tbody([html.Tr([html.Td(t), html.Td(a), html.Td(b), html.Td(mark(t, ok) if t in ("Region", "Language", "Industry") else "")])
+                    for t, a, b, ok in checks]),
+    ])
+
+
+# ======================================================================================
+# Callbacks: "Run Tests" panel
+# ======================================================================================
+@callback(Output("tests-modal", "is_open"), Output("tests-trigger", "data"),
+          Input("btn-tests", "n_clicks"), Input("tests-again", "n_clicks"), Input("tests-close", "n_clicks"),
+          State("tests-trigger", "data"), prevent_initial_call=True)
+def toggle_tests(_open, _again, _close, trigger):
+    """Open (and start the checks), run again, or close the panel."""
+    if ctx.triggered_id == "tests-close":
+        return False, no_update
+    return True, (trigger or 0) + 1
+
+
+@callback(Output("tests-body", "children"), Input("tests-trigger", "data"), prevent_initial_call=True)
+def run_tests(_trigger):
+    """Run every business scenario check and draw one card per check."""
+    results, seconds = scenarios.run_all()
+    passed = sum(1 for s in results if s.passed and not s.skipped)
+    ran = sum(1 for s in results if not s.skipped)
+    all_ok = passed == ran
+    summary = html.Div(className="tests-summary " + ("ok" if all_ok else "bad"), children=[
+        html.Div("✓" if all_ok else "✗", className="tests-summary-mark"),
+        html.Div([
+            html.P(f"{passed} of {ran} checks passed", className="tests-summary-title"),
+            html.P(f"Each check runs the whole program (clean → score → assign) on the real 50,000-lead file "
+                   f"or a small made-up case. Took {seconds:.1f} seconds.", className="tests-summary-sub"),
+        ]),
+    ])
+    cards = [dbc.Col(_test_card(s), xs=12, lg=6, className="mb-3") for s in results]
+    return [summary, html.P("Checks use Best available matching on fixed scenarios. "
+                            "Your current dashboard run stays unchanged.", className="hint mt-2"),
+            dbc.Row(cards, className="mt-3")]
+
+
+def _test_card(s: scenarios.Scenario) -> html.Div:
+    if s.skipped:
+        badge = html.Span("Skipped", className="test-badge skip")
+    elif s.passed:
+        badge = html.Span("✓ Passed", className="test-badge pass")
+    else:
+        badge = html.Span("✗ Failed", className="test-badge fail")
+    def blurb(label, text):
+        """A labelled one-liner, or a short bullet list when given several lines."""
+        body = (html.Ul([html.Li(line) for line in text], className="test-blurb-list") if isinstance(text, list)
+                else html.P(text, className="test-blurb-text"))
+        return html.Div(className="test-blurb", children=[html.P(label, className="test-blurb-label"), body])
+    return html.Div(className="test-card", children=[
+        html.Div(className="test-card-head", children=[
+            html.Div([html.P(f"Test {s.number}", className="test-eyebrow"), html.H3(s.title, className="test-title")]),
+            badge,
+        ]),
+        html.Div(_test_graphic(s), className="test-graphic"),
+        blurb("Why this test", s.why),
+        blurb("Result", s.result),
+        blurb("Why it shows it works", s.meaning),
+    ])
+
+
+def _test_graphic(s: scenarios.Scenario):
+    """A small picture of the result: bars, a before → after list, or outcome chips."""
+    chart = s.chart
+    kind = chart.get("type")
+    config = {"displayModeBar": False, "staticPlot": True}
+    if kind == "bars":
+        fig = charts.test_bars(chart["labels"], chart["values"], chart["colors"], chart.get("unit", ""), chart.get("max"))
+        return dcc.Graph(figure=fig, config=config)
+    if kind == "grouped":
+        return dcc.Graph(figure=charts.test_grouped(chart["labels"], chart["series"], chart.get("unit", "")), config=config)
+    if kind == "pairs":
+        return html.Div(className="pairs", children=[
+            html.Div(className="pair", children=[html.Span(f"“{before}”", className="pair-before"),
+                                                 html.Span("→", className="pair-arrow"),
+                                                 html.Span(after, className="pair-after")])
+            for before, after in chart["rows"]])
+    if kind == "outcomes":
+        return html.Div(className="pairs", children=[
+            html.Div(className="pair", children=[html.Span(label, className="pair-before label"),
+                                                 html.Span("→", className="pair-arrow"),
+                                                 html.Span(("✓ " if ok else "✗ ") + outcome,
+                                                           className="pair-after " + ("ok" if ok else "bad"))])
+            for label, outcome, ok in chart["rows"]])
+    return html.P("Add the 50,000-lead file to see this chart.", className="hint")
 
 
 # ======================================================================================

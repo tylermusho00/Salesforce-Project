@@ -8,29 +8,38 @@ from lead_router.routing import route_all
 SR, JR, MGR = Seniority.SENIOR, Seniority.JUNIOR, Seniority.MANAGER
 
 
-def test_perfect_match_sentence():
+def test_perfect_match_sentence_is_one_short_line():
     reason = route_all(leads(1), [make_rep("R", SR)]).assignments[0].reason
-    assert reason.startswith("Perfect match")
-    assert "covers North America" in reason and "speaks English" in reason and "specializes in Technology" in reason
-    assert "now has 1 of 5 leads" in reason
+    assert reason == "Perfect match: same region, language and industry."
 
 
 def test_close_match_sentence_names_what_differs():
     reason = route_all(leads(1), [make_rep("R", SR, industry="Retail")]).assignments[0].reason
-    assert reason.startswith("Close match (2 of 3")
-    assert "specializes in Retail rather than Technology" in reason
+    assert reason == ("Close match (2 of 3): same region and language; "
+                      "different industry (rep: Retail, lead: Technology).")
+
+
+def test_one_of_three_sentence_names_the_shared_trait():
+    reps = [make_rep("R", SR, region="Europe", industry="Retail")]
+    assert route_all(leads(1), reps).assignments[0].reason == "Best available (1 of 3): only the language matches."
+
+
+def test_unknown_on_both_sides_is_not_called_a_match():
+    reps = [make_rep("R", SR, region="Europe", industry=None)]
+    reason = route_all(leads(1, industry=None), reps).assignments[0].reason
+    assert reason == "Best available (1 of 3): only the language matches."
 
 
 def test_urgent_lead_to_manager_is_explained():
     reason = route_all(leads(1, priority=Priority.CRITICAL), [make_rep("M", MGR)]).assignments[0].reason
-    assert "every matching Senior rep was full, so a Manager took it" in reason
+    assert reason.endswith("No Senior was available at this match level, so a Manager took this urgent lead.")
 
 
 def test_manager_review_sentences_say_what_to_do():
     full = route_all(leads(2), [make_rep("R", SR, max_capacity=1)]).assignments[1].reason
-    assert "all full" in full and "A manager needs to" in full
+    assert full == "Every rep who could take it is full. A manager needs to assign it."
     junior_only = route_all(leads(1, priority=Priority.CRITICAL), [make_rep("J", JR)]).assignments[0].reason
-    assert "never go to Junior reps" in junior_only
+    assert "Juniors can't take urgent leads" in junior_only
 
 
 def test_lead_fixes_show_before_and_after():
@@ -64,3 +73,12 @@ def test_data_quality_report_keeps_examples():
     _, report = clean_leads(csv(LEAD_HEADER + "L-1,Acme,EUR,es,Tech,1,,False\nL-2,Beta,EUR,de,Tech,1,,False\n"))
     assert report.examples["region"] == ['"EUR" -> Europe']
     assert report.examples["language"] == ['"es" -> Spanish', '"de" -> German']
+
+
+def test_manager_explanation_does_not_claim_weaker_match_senior_is_full():
+    reps = [make_rep("S", SR, industry="Retail"), make_rep("M", MGR)]
+    decision = route_all(leads(1, priority=Priority.CRITICAL), reps).assignments[0]
+    assert decision.rep_id == "M"
+    assert "at this match level" in decision.reason
+    assert "were full" not in decision.reason
+    assert reps[0].current_capacity == 0
