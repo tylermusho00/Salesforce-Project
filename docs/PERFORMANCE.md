@@ -1,8 +1,23 @@
 # Performance: how long does 50,000 leads take?
 
-**Short answer:** about **1.3 seconds** for 50,000 leads and 1,600 reps (it was 1.9 s before
-the speed-up work). The slowest stage is **routing** (~0.5 s), followed by **cleaning** (~0.45 s).
-Every decision, every cleaned value and every data-quality count is **identical** to before.
+**Short answer (historical measurement, from the speed-up work):** about **1.3 seconds** for
+50,000 leads and 1,600 reps on the developer machine at the time (it was 1.9 s before the speed-up
+work). Later sessions measured slower medians under browser/host load, and the code has changed
+since; treat 1.3 s as that run's result, not a guarantee. Re-measure with `python scripts/bench.py
+scale 5` and quote the date and machine. These are pipeline timings only, not click-to-render time
+in the dashboard.
+
+**Latest measurement (2026-11-21, `python scripts/bench.py scale 5`, Windows, Python 3.11,
+desktop session with other apps open, not an isolated machine):** median total **1.583 s**
+(load 0.039, clean 0.663, score 0.245, route 0.532, metrics 0.084). No browser interactions or
+tests were initiated concurrently with this measurement. Earlier busy-session medians reached
+3.95 s, so these timings do not establish a speed improvement. Cleaning is the slowest stage in
+the latest run. The before/after table below describes the historical speed-up work.
+
+The latest polish session compared all sample and scale decisions and cleaned leads/reps with
+its saved pre-edit baseline: all were identical. The only report/metric change was the added
+`source_rows_preserved: true` audit flag. A single browser scale click-to-metric-and-tier-chart
+check took **3.561 s**; that includes UI work and is not a latency percentile or guarantee.
 
 ## Method
 
@@ -72,12 +87,15 @@ generated messy leads and 60 small-capacity reps, for every strategy and every m
 
 ## How the work grows (Big-O in plain words)
 
-Routing one lead costs roughly **pools tried x reps per pool**. A lead tries at most 7 pools
-(a few more for an ambiguous region) and stops at the first pool with someone free; each pool
-holds only ~10-30 of the 1,600 reps. So routing 50,000 leads is about
-`leads x pools tried x reps per pool`, a small, roughly constant amount of work per lead, and it grows in a straight
-line with the number of leads. Doubling the leads about doubles the time. It does not grow with the
-total number of reps, only with how many sit in the pools a lead actually looks at. Cleaning is one
+Routing one lead costs roughly **pools tried x reps scanned per pool**. A lead tries at most 7 pools
+(a few more for an ambiguous region) and stops at the first pool with someone free. Full 3-trait
+pools are small, but relaxed pools are not: on the bundled scale data a single-trait pool such as
+"North America, any language, any industry" holds about 580 reps, and "German, any region" about
+550. So the work per lead is small when an exact pool has room and grows toward scanning a large
+share of the reps when a lead falls through to relaxed pools. In the worst case routing is about
+`leads x reps` (O(L x R)); typically it is far less, because most leads stop at a small exact pool.
+Pool membership grows with the total number of reps, so doubling the reps can slow routing even if
+the number of pools stays the same. Scoring also sorts the leads (L log L). Cleaning is one
 pass over the rows (the number of distinct spellings only matters for the first time each is seen).
 
 ## Tried and not kept

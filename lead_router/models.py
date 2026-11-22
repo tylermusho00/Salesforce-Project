@@ -168,6 +168,7 @@ class DataQualityReport:
     invalid: int = 0                # unreadable even after cleaning
     duplicates_removed: int = 0     # exact duplicate rows (same ID and same content)
     duplicate_ids_renamed: int = 0  # same ID but different content -> kept, renamed "-2"
+    source_rows_preserved: bool | None = None  # independently checked before/after source-row identities
     possible_duplicates: int = 0    # same content under a different ID -> kept, flagged
     by_field: dict[str, dict[str, int]] = field(default_factory=dict)  # {"region": {"fixed": 12}, ...}
     examples: dict[str, list[str]] = field(default_factory=dict)       # {"region": ['"EUR" -> Europe', ...]}

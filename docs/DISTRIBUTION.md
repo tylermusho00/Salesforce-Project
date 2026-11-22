@@ -138,8 +138,9 @@ reliably) and unfair in the short run, which is exactly when a manager is watchi
 which is what Weighted Fair Queuing does). Layers 2–4 add value fairness, guaranteed rotation and
 determinism. The live-mode numbers show the difference.
 
-**"How fast is it?"** A pool holds about 10–30 reps, so each pick checks a handful of reps:
-50,000 leads route in under a second. The fairness snapshots add almost nothing (10 passes over
+**"How fast is it?"** Exact-match pools are small, so most picks check a handful of
+reps; leads that fall through to relaxed pools scan more (hundreds on the scale data). Routing
+50,000 leads measured about half a second in the historical benchmark. The fairness snapshots add almost nothing (10 passes over
 1,600 reps).
 
 **"What would you add next?"** (1) A **Senior reserve** for live mode: keep e.g. 15% of each Senior's

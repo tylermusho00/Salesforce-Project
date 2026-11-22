@@ -78,7 +78,8 @@ capacity"**. C is a Junior, so it is never offered a Critical lead, even when it
 | Route **Critical first** | Urgent leads get scarce Senior capacity | File order (a Low lead could take the last Senior slot) |
 | Managers **last** for non-critical leads | Managers have 5–10 slots; keep them for Critical overflow | Treat Managers like everyone else |
 | Most traits in common first: **3 of 3 → 2 of 3 → 1 of 3** | Strict 3-of-3 left 81% of the sample in Manager Review; the closest available rep beats no rep. A better match always wins when that rep is free, and every assignment is labelled with its match level so managers can see weak matches | Strict only (`min_traits_to_match: 3`, still available as a switch) |
-| Language **never** relaxed | A rep can't work a lead they can't talk to | Relax language as a last resort |
+| Language kept in the **first two** match levels (3 of 3, then region + language or language + industry); region + industry with a different language is the last 2-of-3 option, and Best-available mode can fall back to a single shared trait | A rep can't easily work a lead they can't talk to, so language is relaxed only when no same-language rep sharing a second trait is free (a free region + industry rep who speaks another language is still preferred over a same-language rep who shares nothing else). Every such assignment is labelled with its match level and the language mismatch, and the Match quality view counts them | Never relax language (more leads left in Manager Review); treat language like any other trait |
+| **Match quality before seniority** | Within each match level the preferred seniority goes first, but a better match always beats a preferred seniority: an exact-match Manager is used before a weaker-match Senior | Seniority first (more weak matches for non-critical leads, fewer Manager slots used) |
 | Unknown seniority → **Junior** | Safest: Juniors can never take Critical leads | Guess Senior |
 | Negative capacity → **absolute value** | -20, -45 match the dictionary's ranges exactly: a sign typo | Treat as 0 (wastes a real rep) |
 | Plain lists, not a database | The brief asks for in-memory logic; ~2 s for 50k is plenty | SQL / pandas groupby routing (harder to explain) |
@@ -90,14 +91,14 @@ capacity"**. C is a Junior, so it is never offered a Critical lead, even when it
 | load | ~0.03 s | pandas reads everything as text |
 | clean | ~0.45 s | each distinct spelling is resolved once and cached |
 | score | ~0.2 s | |
-| route | ~0.5 s | each pool has ~10–30 reps, so picking is a short scan |
-| **total** | **~1.3 s** | median of 5 runs; before/after and method in [PERFORMANCE.md](PERFORMANCE.md) |
+| route | ~0.5 s | exact pools are small; relaxed pools can hold hundreds of reps (worst case O(leads x reps)) |
+| **total** | **~1.3 s** | historical median of 5 runs (later runs under browser/host load were slower); before/after and method in [PERFORMANCE.md](PERFORMANCE.md) |
 
 Run `pytest tests/test_benchmark.py --benchmark-only` to measure on your machine.
 
 ## Combined-version validation (2026-11-21)
 
-The combined suite has **244 passing tests**, including the business scenarios and dashboard
+The combined suite has **293 passing tests**, including the business scenarios and dashboard
 integration regressions. Routing decisions, cleaned data, reports and metrics match the pre-merge
 version for sample and scale; explanation wording is intentionally shorter. See
 [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). The earlier ~1.3 s timing above is historical;

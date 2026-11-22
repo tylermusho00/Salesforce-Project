@@ -196,6 +196,8 @@ def parse_int(value: Any) -> tuple[int | None, str]:
     if isinstance(value, bool):          # True/False are technically ints in Python; reject them
         return None, INVALID
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None, INVALID
         return int(value), OK
     return _parse_int_text(value if isinstance(value, str) else str(value))
 
@@ -215,14 +217,20 @@ def _parse_int_text(value: str) -> tuple[int | None, str]:
         number, suffix = single.groups()
         if suffix:
             status = FIXED
-        return round(float(number) * _MULTIPLIER[suffix]), status
+        amount = float(number) * _MULTIPLIER[suffix]
+        if not math.isfinite(amount):     # "9" x 400 overflows to infinity: not a usable number
+            return None, INVALID
+        return round(amount), status
 
     number_range = _NUMBER_RANGE.match(compact)
     if number_range:
         low, low_suffix, high, high_suffix = number_range.groups()
         low_value = float(low) * _MULTIPLIER[low_suffix or high_suffix]   # "1-5k" means 1k-5k
         high_value = float(high) * _MULTIPLIER[high_suffix]
-        return round((low_value + high_value) / 2), FIXED
+        middle = (low_value + high_value) / 2
+        if not math.isfinite(middle):
+            return None, INVALID
+        return round(middle), FIXED
 
     return None, INVALID
 
@@ -324,11 +332,17 @@ def clean_leads(df: pd.DataFrame) -> tuple[list[Lead], DataQualityReport]:
     duplicates = DuplicateChecker(report)
 
     leads = []
+    source_rows = set()
     for row_number, row in enumerate(rows_as_dicts(df, LEAD_COLUMNS), start=1):
+        # Independent of duplicate classification: retain every distinct canonical source row.
+        source_rows.add(tuple(str(row.get(column, "")) for column in LEAD_COLUMNS))
         lead = clean_lead_row(row, row_number, cleaners, report)
         if duplicates.should_keep(lead):
             leads.append(lead)
 
+    report.source_rows_preserved = source_rows == {
+        tuple(str(lead.raw.get(column, "")) for column in LEAD_COLUMNS) for lead in leads
+    }
     report.rows_out = len(leads)
     report.value_map = build_value_map(df, LEAD_VALUE_FIELDS, cleaners)
     return leads, report
@@ -402,12 +416,18 @@ def unique_id(original_id: str, taken: Any, times_seen: dict[str, int]) -> str:
             return candidate
 
 
+_DUPLICATE_CHECKER_FLAGS = ("duplicate_id_renamed", "possible_duplicate_of:")
+
+
 class DuplicateChecker:
     """Decides what to do with repeated leads.
 
-        same ID + same content       -> the same lead uploaded twice: keep only the first
-        same ID + different content  -> two real leads with a clashing ID: keep both, rename to "-2"
+        same ID + same identity      -> the same lead uploaded twice: keep only the first
+        same ID + different identity -> two real leads with a clashing ID: keep both, rename to "-2"
         new ID  + same content       -> maybe a duplicate: keep it, but flag it for the manager
+
+    "Identity" compares the original source columns. Distinct spellings, unknown values and
+    alternative regions remain available even when they normalize to the same cleaned content.
 
     "Same ID" means the ID as written in the file. A rename never reuses an ID that is already
     taken: with IDs A, A, A-2 the second A becomes A-2, so the real A-2 becomes A-2-2.
@@ -416,24 +436,47 @@ class DuplicateChecker:
 
     def __init__(self, report: DataQualityReport):
         self.report = report
-        self.rows_seen: set[tuple[str, tuple]] = set()   # (ID as written in the file, content)
+        # ID as written in the file -> the kept lead with that ID (a list once the ID repeats)
+        self.kept_by_source_id: dict[str, Lead | list[Lead]] = {}
         self.ids_taken: set[str] = set()                  # IDs of the leads we kept (after renaming)
         self.times_id_seen: dict[str, int] = {}
         self.first_id_with_content: dict[tuple, str] = {}
 
     @staticmethod
     def content_of(lead: Lead) -> tuple:
+        """The cleaned values. Two leads with the same content *look* alike (possible duplicate)."""
         return (lead.company_name.lower(), lead.region, lead.language, lead.industry,
                 lead.company_size, lead.recent_activity, lead.vip_referral)
+
+    @staticmethod
+    def identity_of(lead: Lead) -> tuple:
+        """Exact source-column values, before lossy parsing or normalization.
+
+        Similar cleaned rows remain possible duplicates, not automatic merges. Rows made by
+        callers without raw data use the complete cleaned identity as a compatibility fallback.
+        """
+        if lead.raw:
+            return tuple(str(lead.raw.get(column, "")) for column in LEAD_COLUMNS)
+        flags = sorted(f for f in lead.flags if not f.startswith(_DUPLICATE_CHECKER_FLAGS))
+        return (DuplicateChecker.content_of(lead), tuple(lead.alt_regions),
+                tuple(sorted(lead.imputed_fields)), tuple(flags))
 
     def should_keep(self, lead: Lead) -> bool:
         content = self.content_of(lead)
         original_id = lead.id
 
-        if (original_id, content) in self.rows_seen:      # exact re-upload of a row we kept
-            self.report.duplicates_removed += 1
-            return False
-        self.rows_seen.add((original_id, content))
+        # Identity only matters when the ID was seen before (rare), so it is only built then.
+        earlier = self.kept_by_source_id.get(original_id)
+        if earlier is None:
+            self.kept_by_source_id[original_id] = lead
+        else:
+            if not isinstance(earlier, list):
+                earlier = self.kept_by_source_id[original_id] = [earlier]
+            identity = self.identity_of(lead)
+            if any(self.identity_of(kept) == identity for kept in earlier):
+                self.report.duplicates_removed += 1       # exact re-upload of a row we kept
+                return False
+            earlier.append(lead)
 
         if original_id in self.ids_taken:                 # ID clash with different content
             lead.id = unique_id(original_id, self.ids_taken, self.times_id_seen)

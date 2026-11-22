@@ -15,5 +15,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,dashboard]"   # tests/test_dashboard.py imports Dash
       - run: pytest -q --benchmark-disable

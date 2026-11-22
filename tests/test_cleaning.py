@@ -2,7 +2,7 @@ import pytest
 
 from conftest import LEAD_HEADER, REP_HEADER, csv
 from lead_router.cleaning import build_canonicalizers, clean_leads, clean_reps, normalize_text, \
-    parse_company_size, parse_vip
+    parse_company_size, parse_int, parse_vip
 from lead_router.models import Seniority
 
 
@@ -100,6 +100,46 @@ def test_exact_duplicate_rows_merge_but_conflicting_ids_are_kept():
     assert [l.id for l in out] == ["L-1", "L-1-2", "L-2"]
     assert report.duplicates_removed == 1 and report.duplicate_ids_renamed == 1
     assert any(f.startswith("possible_duplicate_of:L-1") for f in out[2].flags)
+
+
+@pytest.mark.parametrize("first,second", [
+    # same cleaned values, but the second row keeps Europe as a backup region
+    ("L-1,Acme,Asia-Pacific,EN,Retail,10,,False", "L-1,Acme,ASIA PACIFICEurope,EN,Retail,10,,False"),
+    # same cleaned values (VIP -> False), but "Unknown" must stay flagged for a person to confirm
+    ("L-1,Acme,NA,EN,Retail,10,,False", "L-1,Acme,NA,EN,Retail,10,,Unknown"),
+])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_rows_that_clean_alike_but_differ_are_never_merged(first, second, reverse):
+    rows = [first, second][::-1] if reverse else [first, second]
+    out, report = clean_leads(csv(LEAD_HEADER + "\n".join(rows) + "\n"))
+    assert len(out) == 2 and report.duplicates_removed == 0
+    assert [l.id for l in out] == ["L-1", "L-1-2"] and report.duplicate_ids_renamed == 1
+    raws = sorted(l.raw["Region"] + "|" + l.raw["VIP_Referral"] for l in out)
+    assert raws == sorted(r.split(",")[2] + "|" + r.split(",")[7] for r in rows)   # both source rows survive
+    if "Europe" in second:
+        assert sorted(l.alt_regions for l in out) == [(), ("Europe",)]
+    else:
+        assert sorted("vip_unknown" in l.flags for l in out) == [False, True]
+    assert any(f.startswith("possible_duplicate_of:") for f in out[1].flags)   # still looks alike
+
+
+def test_true_identical_repeats_still_merge_with_alternate_and_unknown_values():
+    row = "L-1,Acme,ASIA PACIFICEurope,EN,Retail,10,,Unknown\n"
+    out, report = clean_leads(csv(LEAD_HEADER + row + row + row))
+    assert len(out) == 1 and report.duplicates_removed == 2
+    assert out[0].alt_regions == ("Europe",) and "vip_unknown" in out[0].flags
+
+
+@pytest.mark.parametrize("raw", ["9" * 400, "9" * 400 + "k", "1-" + "9" * 400, "9" * 400 + "-" + "9" * 400,
+                                 float("inf"), float("-inf")])
+def test_overflowing_numbers_are_invalid_not_a_crash(raw):
+    assert parse_int(raw) == (None, "invalid")
+    assert parse_company_size(raw)[0] is None
+
+
+def test_oversized_company_size_row_is_cleaned_not_crashed():
+    out, report = clean_leads(csv(LEAD_HEADER + "L-1,Acme,NA,EN,Retail," + "9" * 400 + ",,False\n"))
+    assert out[0].company_size is None and "company_size" in out[0].imputed_fields
 
 
 def test_headers_are_case_and_space_tolerant():

@@ -59,8 +59,9 @@ For each lead:
     6. When every lead is placed, review.py looks at the Manager Review leads once more, using
        the capacity that is left, and writes a suggested next step for the manager.
 
-Why this is fast enough: a pool holds ~10-30 reps for 1,600 reps total, so step 3 looks at a
-handful of reps per lead. 50,000 leads route in well under a second.
+Prepared pools reduce candidate lookups, but relaxed pools can contain hundreds of reps.
+Selection scans the eligible members; worst-case routing can approach O(leads × reps), plus
+sorting. Use scripts/bench.py for current measurements rather than assuming a fixed runtime.
 """
 from __future__ import annotations
 

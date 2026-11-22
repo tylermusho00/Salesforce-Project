@@ -211,6 +211,56 @@ def test_fingerprint_is_repeatable_and_sensitive():
     assert sample_or_skip(min_traits=3).metrics["fingerprint"] != first.metrics["fingerprint"]
 
 
+def test_alternate_region_lead_with_clashing_id_is_routed_not_merged():
+    """Audit F1: these two rows used to merge, losing the Europe backup region, while the
+    no-loss check stayed green. Both must be decided; the backup-region one reaches the Europe rep."""
+    leads_df = lead_rows("L-1,Acme,Asia-Pacific,EN,Retail,10,,False",
+                         "L-1,Acme,ASIA PACIFICEurope,EN,Retail,10,,False")
+    reps_df = csv(REP_HEADER + "R-1,Bo,Europe,EN,Retail,Senior,0,40\n")
+    r = run_pipeline_frames(leads_df, reps_df, min_traits=3)
+    c = r.metrics
+    assert (c["rows_in"], c["rows_out"], c["rows_merged_as_duplicates"]) == (2, 2, 0)
+    assert c["every_row_once"]
+    by_id = {a.lead_id: a for a in r.assignments}
+    assert by_id["L-1-2"].status is AssignmentStatus.ASSIGNED and by_id["L-1-2"].rep_id == "R-1"
+    assert by_id["L-1"].status is AssignmentStatus.MANAGER_REVIEW
+
+
+def test_fingerprint_covers_placement_only():
+    """The fingerprint is documented as a placement fingerprint: status, rep and match level."""
+    from dataclasses import replace
+    from lead_router.pipeline import decision_fingerprint
+    r = run_pipeline_frames(lead_rows("L-1,A,NA,EN,Tech,10,,False"),
+                            csv(REP_HEADER + "R-1,Bo,NA,EN,Tech,Senior,0,40\n"))
+    base = decision_fingerprint(r.assignments)
+    a = r.assignments[0]
+    for change in ({"score": a.score + 1}, {"priority": Priority.LOW}, {"reason": "other"},
+                   {"suggested_action": "x"}, {"suggested_rep_id": "R-9"}):
+        assert decision_fingerprint([replace(a, **change)]) == base, change      # not covered
+    for change in ({"rep_id": "R-2"}, {"status": AssignmentStatus.MANAGER_REVIEW},
+                   {"match_level": MatchLevel.ONLY_REGION}):
+        assert decision_fingerprint([replace(a, **change)]) != base, change      # covered
+
+
+def test_region_industry_rep_is_preferred_over_language_only_rep():
+    """Documented language policy: a different-language rep sharing region + industry beats a
+    same-language rep who shares nothing else."""
+    r = run_pipeline_frames(lead_rows("L-1,A,NA,EN,Tech,10,,False"),
+                            csv(REP_HEADER + "R-1,Bo,NA,German,Tech,Senior,0,40\n"
+                                "R-2,Cy,Europe,EN,Retail,Senior,0,40\n"))
+    a = r.assignments[0]
+    assert a.rep_id == "R-1" and a.match_level is MatchLevel.RELAXED_LANGUAGE
+
+
+def test_salesforce_template_keeps_source_ids_after_rename():
+    from lead_router.export import salesforce_frame
+    r = run_pipeline_frames(lead_rows("A,X,NA,EN,Tech,10,,False", "A,Y,Europe,DE,Retail,20,,False",
+                                      "A-2,Z,NA,EN,Tech,30,,False"),
+                            csv(REP_HEADER + "R-1,Bo,NA,EN,Tech,Senior,0,40\n"))
+    sf = salesforce_frame(results_frame(r))
+    assert sorted(zip(sf["Id"], sf["Source_Lead_ID__c"])) == [("A", "A"), ("A-2", "A"), ("A-2-2", "A-2")]
+
+
 def test_results_frame_has_suggestion_columns():
     r = run_pipeline_frames(lead_rows("L-1,A,NA,EN,Tech,10,,True"),
                             csv(REP_HEADER + "R-1,Bo,NA,EN,Tech,Junior,0,40\n"))

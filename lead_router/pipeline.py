@@ -179,9 +179,11 @@ def evidence_metrics(leads: list[Lead], reps: list[Rep], assignments: list[Assig
 
 
 def decision_fingerprint(assignments: list[Assignment]) -> str:
-    """A 12-character code built from every (lead, status, rep, match level), sorted by lead ID.
-    Same input + same rules -> same code, so "Reset, then run again" can be shown to give the
-    identical result. One different decision gives a completely different code."""
+    """A 12-character placement fingerprint built from every (lead, status, rep, match level),
+    sorted by lead ID. Same input + same rules -> same code, so "Reset, then run again" can be shown
+    to put every lead in the same place. One different placement gives a completely different code.
+    It deliberately does not cover score, priority, reason text or review suggestions: those are
+    checked by the tests, not by this code."""
     rows = sorted(f"{a.lead_id}|{a.status.value}|{a.rep_id or ''}|{a.match_level.value if a.match_level else ''}"
                   for a in assignments)
     return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()[:12]
@@ -203,6 +205,7 @@ def conservation_check(lead_quality: DataQualityReport, leads: list[Lead],
     decided_ids = [a.lead_id for a in assignments]
     unique_ids = len(set(lead_ids)) == len(lead_ids)
     every_row_once = (lead_quality.rows_in == len(leads) + lead_quality.duplicates_removed
+                      and lead_quality.source_rows_preserved is not False
                       and unique_ids and len(decided_ids) == len(lead_ids)
                       and set(decided_ids) == set(lead_ids))
     return {
@@ -211,6 +214,7 @@ def conservation_check(lead_quality: DataQualityReport, leads: list[Lead],
         "rows_merged_as_duplicates": lead_quality.duplicates_removed,
         "ids_renamed": lead_quality.duplicate_ids_renamed,
         "every_row_once": every_row_once,
+        "source_rows_preserved": lead_quality.source_rows_preserved,
     }
 
 
