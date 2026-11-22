@@ -18,6 +18,10 @@ Lightning-style dashboard to present the results. **No lead is ever dropped.**
 
 ## Quick start
 
+**Easiest:** double-click `START_WINDOWS.bat` (Windows) or `start_mac.command` (Mac). It installs everything the first time and opens the dashboard in your browser. See `HOW_TO_RUN.txt`.
+
+Manual setup:
+
 Requires **Python 3.11+**.
 
 ```bash

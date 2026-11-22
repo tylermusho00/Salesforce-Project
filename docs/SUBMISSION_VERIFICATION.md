@@ -1,6 +1,6 @@
 # Submission verification — 2026-11-21
 
-Merged GitHub `b65c145` into the local routing/evidence upgrades, audit fixes and polished capacity simulator. Both histories are preserved; no rebase or force push.
+Merged GitHub `b65c145` and the subsequent `de05e6d` local-launcher update into the local routing/evidence upgrades, audit fixes and polished capacity simulator. Both histories are preserved; no rebase or force push.
 
 ## Verified
 
