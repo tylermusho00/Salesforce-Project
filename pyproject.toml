@@ -35,6 +35,7 @@ leadrouter = "lead_router.cli:main"
 include = ["lead_router*"]
 
 [tool.pytest.ini_options]
+markers = ["slow: extended ML, randomized-input, and benchmark checks (omit with -m 'not slow')"]
 testpaths = ["tests"]
 pythonpath = ["."]   # tests can import lead_router even without `pip install -e .`
 # Dash ships a pytest plugin for browser tests that we don't use; loading it costs ~6 s per run.

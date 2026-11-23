@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: salesforce-lead-router
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app.main:server --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 360
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: PYTHONUNBUFFERED
+        value: "1"

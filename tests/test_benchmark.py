@@ -5,6 +5,7 @@ One timed run by default, to keep the whole suite fast. For an average of severa
     BENCH_ROUNDS=3 pytest tests/test_benchmark.py        (PowerShell: $env:BENCH_ROUNDS=3; pytest ...)
 """
 import os
+import pytest
 
 from lead_router.pipeline import run_pipeline
 
@@ -12,6 +13,7 @@ TARGET_SECONDS = 10.0  # recorded result goes in the README / slides
 ROUNDS = int(os.environ.get("BENCH_ROUNDS", "1"))
 
 
+@pytest.mark.slow
 def test_scale_dataset_under_target(benchmark, scale_paths):
     result = benchmark.pedantic(run_pipeline, args=scale_paths, rounds=ROUNDS, iterations=1)
     m = result.metrics

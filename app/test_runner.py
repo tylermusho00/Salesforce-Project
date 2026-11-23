@@ -171,11 +171,12 @@ class SuiteRun:
         return sum(r.cases - r.failed - r.skipped for r in self.results.values())
 
 
-def start_suite() -> tuple[subprocess.Popen, Path]:
+def start_suite(*, full: bool = False) -> tuple[subprocess.Popen, Path]:
     """Start `python -m pytest` in the background. Returns the process and where its report will be."""
     report = Path(tempfile.mkdtemp(prefix="leadrouter-tests-")) / "report.xml"
+    selection = [] if full else ["-m", "not slow"]
     process = subprocess.Popen(
-        [sys.executable, "-m", "pytest", "-q", "--benchmark-disable", "-p", "no:cacheprovider", f"--junitxml={report}"],
+        [sys.executable, "-m", "pytest", "-q", *selection, "--benchmark-disable", "-p", "no:cacheprovider", f"--junitxml={report}"],
         cwd=BACKEND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return process, report
 

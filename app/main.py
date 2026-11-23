@@ -250,7 +250,7 @@ def page_header() -> html.Div:
                 dbc.DropdownMenuItem("Rep capacity · CSV", id="exp-reps", href="/exports/reps.csv", external_link=True),
             ]),
             html.Button("Run tests", id="btn-tests", className="slds-btn tests-btn",
-                        title="Open Tests and run the full automated suite"),
+                        title="Open Tests and run the quick automated suite"),
         ]),
     ])
 
@@ -521,10 +521,11 @@ def tests_page() -> html.Div:
         html.Div(className="component", children=[
             html.Div(className="component-head", children=html.H2("Is Lead Router really working?", className="component-title")),
             html.Div(className="component-body tests-intro", children=[
-                html.P(["Run the full automated suite. Results show what passed and what needs attention."],
+                html.P(["Run the quick suite, including the 50,000-lead safety checks. Extended ML, randomized-input and benchmark checks are reserved for the full suite."],
                        className="mb-2"),
-                html.Button("Run all tests", id="tests-run", className="slds-btn brand"),
+                html.Button("Run quick tests", id="tests-run", className="slds-btn brand"),
                 html.Span("Runs separately; the active routing run stays unchanged.", className="hint ms-2"),
+                html.P(["Full suite: ", html.Code("python -m pytest -q --benchmark-disable")], className="hint mt-2"),
             ]),
         ]),
         dcc.Loading(type="circle", color="#0176D3", children=html.Div(id="tests-body", className="page-stack")),
@@ -1345,7 +1346,7 @@ _SCALE_RUN: dict[str, Any] = {}
 
 
 def _scale_run_for_cards():
-    """The 50k run behind the picture cards, done once and kept in memory: re-clicking Run all tests
+    """The 50k run behind the picture cards, done once and kept in memory: re-clicking Run quick tests
     then only waits for pytest. (pytest itself always does fresh runs.)"""
     if "run" not in _SCALE_RUN:
         _SCALE_RUN["run"] = scenarios.full_run()

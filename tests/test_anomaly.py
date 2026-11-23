@@ -48,6 +48,7 @@ def scale(scale_run):
     return scale_run[0]   # the shared 50k run (conftest.scale_run)
 
 
+@pytest.mark.slow
 def test_ml_never_changes_a_route(scale, monkeypatch):
     """Run the 50k file again with the model switched off: every lead gets the exact same rep and priority."""
     monkeypatch.setattr(pipeline, "flag_leads", lambda leads: 0)

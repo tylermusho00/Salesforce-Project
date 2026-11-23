@@ -6,12 +6,23 @@ Most of them check small technical details. This page covers the **business scen
 in words anyone can follow.
 
 **See them on the dashboard:** open the **Tests** tab (or click **Run tests** in the header) and press
-**▶ Run all tests**. It runs the real pytest suite in the background (about 15 seconds) and groups the
+**Run quick tests**. It runs pytest in the background with `-m "not slow"` and groups the
 results by what they prove: ties, rules that must never break, edge cases and unknown values, Manager
 Review, and scale. Below that, these business scenarios appear as cards with a small chart and three short
 blurbs: why this test, the result, and why it shows the program works. The checks live in
 `lead_router/scenarios.py`, so the website and pytest always run the same code. The panel uses
 Best available matching on fixed scenarios and leaves the current dashboard run unchanged.
+
+The quick suite retains the shared 50,000-lead safety checks. Three extended checks are
+excluded: the ML-on/off comparison on 50k leads, the separate full-scale benchmark, and
+the 150-example randomized-input test. They remain in the full suite and CI; no tests
+were deleted. The dashboard state-preservation test reuses the session's scale result
+instead of running the same dataset again.
+
+```bash
+python -m pytest -q -m "not slow" --benchmark-disable  # quick
+python -m pytest -q --benchmark-disable                # full (also used by CI)
+```
 
 Each scenario test runs the **whole program**, the same way the dashboard does: read the CSV, clean
 it, score it, route it. It then checks the outcome. Four of them use the real 50,000-lead /

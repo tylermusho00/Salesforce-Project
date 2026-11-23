@@ -277,9 +277,10 @@ def test_assigned_drawer_retains_rep_and_trait_evidence_with_short_explanation()
     assert "of" in text and "leads" in text
 
 
-def test_business_tests_preserve_active_strict_run(monkeypatch):
+def test_business_tests_preserve_active_strict_run(monkeypatch, scale_run):
     from app.test_runner import SuiteRun, TestResult
     monkeypatch.setattr(dashboard.test_runner, "start_suite", lambda: (None, None))
+    monkeypatch.setattr(dashboard, "_scale_run_for_cards", lambda: scale_run)
     monkeypatch.setattr(dashboard.test_runner, "finish_suite", lambda *args: SuiteRun(
         {"example": TestResult("example", "test_example.py", cases=1)}, 0.01))
     result = show(sample(min_traits=3))

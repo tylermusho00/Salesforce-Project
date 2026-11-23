@@ -1,5 +1,6 @@
 """Property tests: random messy rows never crash the pipeline and the core guarantees always hold."""
 import pandas as pd
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -19,6 +20,7 @@ lead_rows = st.lists(st.fixed_dictionaries({c: messy for c in LEAD_COLUMNS}), ma
 rep_rows = st.lists(st.fixed_dictionaries({c: messy for c in REP_COLUMNS}), max_size=15)
 
 
+@pytest.mark.slow
 @settings(max_examples=150, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(lead_rows, rep_rows)
 def test_random_messy_rows_never_crash(leads, reps):
